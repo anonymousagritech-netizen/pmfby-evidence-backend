@@ -34,3 +34,22 @@ describe('columnMapping (AI/auto column mapping for Excel import)', () => {
     expect(mapping.Totally_Unrelated_Garbage_Column_Xyz.field).toBeNull();
   });
 });
+
+describe('Farmer_Mobile mapping', () => {
+  test('farmerMobile header maps to Farmer_Mobile (exact)', () => {
+    const m = proposeColumnMapping(['farmerName', 'farmerMobile']);
+    expect(m.farmerMobile).toEqual({ field: 'Farmer_Mobile', confidence: 'exact' });
+  });
+
+  test('surveyorMobile and villagersMobile never map to Farmer_Mobile', () => {
+    const m = proposeColumnMapping(['farmerMobile', 'surveyorMobile', 'villagersMobile']);
+    expect(m.surveyorMobile.field).toBe('Surveyor_Mobile');
+    expect(m.villagersMobile.field).toBe('Source_Villager_Mobile');
+    expect(m.farmerMobile.field).toBe('Farmer_Mobile');
+  });
+
+  test('without a farmer mobile column, surveyor/villager mobile are not mistaken for it', () => {
+    const m = proposeColumnMapping(['surveyorMobile', 'villagersMobile']);
+    expect(Object.values(m).some((x) => x.field === 'Farmer_Mobile')).toBe(false);
+  });
+});
