@@ -418,3 +418,79 @@ table has a checkbox; selecting one or more and picking a destination surveyor f
 dropdown runs the transfer via `assignedFarmerIdsBySurveyor`, a new field on the
 preview/commit response mapping each surveyor to the farmer IDs they were assigned in
 that run.
+
+## Bulk surveyor import (real data: `Surveyor_Details.xlsx`, 84,252 rows)
+
+Replaces one-by-one manual surveyor account creation. `src/services/surveyorImportService.js`
++ `POST /api/users/bulk-import/preview` and `/commit` (Super Admin only), an admin-web
+card on the Users page (preview → commit, same two-step pattern as the main Excel
+Import page).
+
+**Real-file result** (run against the actual source file, not a synthetic fixture):
+84,252 data rows → **123 unique surveyors** (by mobile) → **121 created**, 2 skipped
+(no usable status anywhere for that mobile), **4 status conflicts** flagged as
+data-quality warnings (all resolved to the last status value seen in file order, all
+happened to resolve to "Active"). Every created account got a synthetic login email
+(`{mobile}@pmfby-evidence.local`), a real per-account generated password (never the
+shared seed password), and `force_password_change = true`.
+
+**Dedupe key: mobile, not name.** The real file repeats the same surveyor once per
+district/village they cover (one surveyor had ~760 rows). Grouped by
+`surveyorMobile` (normalized from Excel's numeric cell type without introducing
+scientific notation or losing precision), with every `districtName` seen for that
+mobile aggregated into `home_district_ids` — richer than the single-surveyor
+chip-editor UI built in an earlier pass, which still works for manual touch-ups
+afterward.
+
+**Status-driven lifecycle, explicit-only.** `Active` creates (if new) or
+reactivates/updates district list (if existing); `Inactive` deactivates
+(`is_active = false`, reusing the exact same column/semantics as the existing manual
+deactivate flow — reversible, history preserved); `Delete` soft-deletes (reusing the
+existing `deleted_at` soft-delete). **Judgment call, as asked**: a mobile number that
+simply disappears from a later upload (not mentioned at all) is left completely
+untouched — no deactivation, no deletion. Only an explicit status value in the file
+drives a lifecycle change. Chosen over "absence means remove" because a partial or
+accidentally-truncated re-upload (a real risk with an 80k+ row file re-exported daily)
+would otherwise silently lock out every surveyor missing from that one bad file — far
+more dangerous than occasionally leaving a genuinely-departed surveyor's account active
+a little longer than ideal (and the Inactive/Delete path is right there for whoever
+actually removes them from the roster). A row with no usable status value at all
+(blank, or unrecognized text) is also never defaulted to Active or Inactive — it's
+skipped and counted separately (`skippedNoStatus`) rather than guessed at.
+
+**Conflicting status values across a mobile's duplicate rows** (4 of the 123 real
+surveyors had both "Active" and "Inactive" rows — likely different district rows
+captured at different times within the same export) are resolved to the LAST value
+encountered in file row order (treated as the most recent/authoritative) and always
+surfaced as a named warning in the import summary (mobile, name, every distinct status
+value seen, what it resolved to) — never silently picked.
+
+**Login credential gap.** This app's login has always required an email; this real
+data has only a mobile number. Rather than block the whole feature on redesigning
+login, bulk-created accounts get a synthetic email (`{mobile}@pmfby-evidence.local`,
+matching the existing seed-data domain convention) and a real per-account random
+password (`crypto.randomBytes`, never the shared `TestPass123!`-style seed password —
+that would be a genuine security problem at 80k-surveyor scale). Added a minimal
+force-password-change mechanism to make the credential gap actually usable rather than
+a dead end: `users.force_password_change` (migration `1700000011000`), surfaced on
+login/`/me` responses, plus a new minimal `POST /api/auth/change-password` endpoint
+that clears the flag. **Not yet wired into admin-web's own login screen** — the flag
+is returned by the API, but there's no forced-reset screen in the React app yet that
+reads it and redirects; that's the next step before this is usable by an actual
+bulk-imported surveyor logging in for the first time, flagged here rather than silently
+left half-done.
+
+**Auditing**: one batch-summary `audit_logs` row per import run (action
+`bulk_import_surveyors`), not one row per surveyor — 123 individual audit rows per
+daily re-upload would swamp the audit log for every other feature in the app. The full
+per-mobile change list (every create/reactivate/deactivate/delete decision, keyed by
+mobile) is preserved in that one row's `metadata.changeLog`, so nothing is actually
+lost — it's just not its own top-level row.
+
+Tests: 7 unit (dedupe/district-aggregation/status-conflict-resolution/mobile
+normalization) + 10 integration (RBAC, create-on-Active, Active→Inactive and
+Inactive→Delete re-upload transitions, a deactivated bulk-imported surveyor provably
+cannot log in AND cannot pass the `authenticate` middleware's fresh is_active check
+even with a pre-existing token, the disappearing-mobile-is-untouched rule, unknown-
+mobile Delete as a safe no-op, no-status rows skipped, conflict-warning content, and
+the single-batch-audit-row guarantee).

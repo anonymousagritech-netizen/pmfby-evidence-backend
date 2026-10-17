@@ -1,12 +1,42 @@
 const express = require('express');
+const multer = require('multer');
 const { pool } = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/rbac');
 const { hashPassword } = require('../utils/auth');
 const { recordAudit } = require('../services/auditLog');
+const surveyorImportService = require('../services/surveyorImportService');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 router.use(authenticate);
+
+// Bulk surveyor import: preview (parse + dedupe-by-mobile + aggregate districts, no
+// writes) then commit (upsert users per the Status column's lifecycle rules). See
+// surveyorImportService.js and ROADMAP.md for the dedupe/lifecycle/credential design.
+router.post('/bulk-import/preview', requireRole(ROLES.SUPER_ADMIN), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file (multipart field "file") required' });
+    const result = await surveyorImportService.createImportPreview({
+      buffer: req.file.buffer, originalFilename: req.file.originalname, uploadedBy: req.user.id,
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/bulk-import/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const result = await surveyorImportService.commitSurveyorImport({ sessionId, importedBy: req.user.id });
+    res.json(result);
+  } catch (err) {
+    if (/session not found/i.test(err.message)) return res.status(410).json({ error: err.message });
+    next(err);
+  }
+});
 
 // Super Admin: create users/roles.
 router.post('/', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {

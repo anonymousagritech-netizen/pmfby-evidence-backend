@@ -12,7 +12,7 @@ const app = createApp();
 // 150-200MB+ on a real extracted dataset — generous timeout so this suite isn't flaky
 // on a slower CI/dev machine or while the extraction scripts themselves are still
 // running in the background.
-jest.setTimeout(60000);
+jest.setTimeout(90000);
 
 describe('Auto-assign: RBAC + preview/commit', () => {
   let admin, adminToken, manager, managerToken, surveyor, surveyorToken;

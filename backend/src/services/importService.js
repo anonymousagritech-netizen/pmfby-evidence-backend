@@ -321,4 +321,5 @@ module.exports = {
   createImportPreview,
   commitImport,
   applyVillageAutoCorrection,
+  pickWorksheet,
 };

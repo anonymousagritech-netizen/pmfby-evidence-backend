@@ -12,6 +12,117 @@ const ROLE_OPTIONS = [
 
 const emptyForm = { name: '', email: '', phone: '', password: '', roleKey: 'surveyor', scopeStateId: '', scopeDistrictId: '' };
 
+// Bulk surveyor import: Excel preview -> commit, same two-step pattern as the main
+// Excel Import page. Dedupes by mobile and aggregates every district seen for that
+// mobile; status (Active/Inactive/Delete) drives create/reactivate/deactivate/delete.
+// See backend/src/services/surveyorImportService.js + ROADMAP.md for the full rules.
+function BulkSurveyorImportCard({ onImported }) {
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setResult(null);
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api.post('/users/bulk-import/preview', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setPreview(res.data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Preview failed');
+    } finally {
+      setBusy(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleCommit() {
+    if (!preview) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post('/users/bulk-import/commit', { sessionId: preview.sessionId });
+      setResult(res.data);
+      setPreview(null);
+      onImported?.();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Import failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Bulk Surveyor Import</h2>
+      <p className="help-text">
+        Upload an Excel file with columns <code>districtName, surveyorName, surveyorMobile,
+        Status (Active/Inactive/Delete)</code>. Rows are deduped by mobile number
+        (names can collide, mobile is the stable identifier); every district seen for a
+        mobile is collected into that surveyor's home-district list. Status drives the
+        account lifecycle: Active creates/reactivates, Inactive deactivates, Delete
+        soft-deletes. A mobile not mentioned in a later upload is left untouched.
+      </p>
+      <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={busy} />
+      {error && <div className="error-text">{error}</div>}
+
+      {preview && (
+        <div style={{ marginTop: 14 }}>
+          <p>
+            {preview.totalRows} rows → <strong>{preview.uniqueSurveyors}</strong> unique surveyors.
+            {preview.conflictCount > 0 && <span className="error-text"> {preview.conflictCount} have conflicting status values across their rows (resolved to the last value seen — see warnings after commit).</span>}
+            {preview.noStatusCount > 0 && <span> {preview.noStatusCount} have no usable status value and will be skipped.</span>}
+          </p>
+          <button type="button" className="primary" disabled={busy} onClick={handleCommit}>Commit Import</button>
+        </div>
+      )}
+
+      {result && (
+        <div style={{ marginTop: 14 }}>
+          <h3>Import complete</h3>
+          <div className="stat-grid">
+            <div className="stat-card" style={{ '--accent': 'var(--p3-dot)' }}>
+              <span className="stat-label">Created</span><span className="stat-value">{result.summary.created}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--info)' }}>
+              <span className="stat-label">Updated / Reactivated</span><span className="stat-value">{result.summary.updated + result.summary.reactivated}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--amber)' }}>
+              <span className="stat-label">Deactivated</span><span className="stat-value">{result.summary.deactivated}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--p1-dot)' }}>
+              <span className="stat-label">Deleted</span><span className="stat-value">{result.summary.deleted}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--neutral-500)' }}>
+              <span className="stat-label">Skipped (no status)</span><span className="stat-value">{result.summary.skippedNoStatus}</span>
+            </div>
+          </div>
+          {result.warnings.length > 0 && (
+            <>
+              <h4>Data-quality warnings: conflicting status values</h4>
+              <table>
+                <thead><tr><th>Mobile</th><th>Name</th><th>Status values seen</th><th>Resolved to</th></tr></thead>
+                <tbody>
+                  {result.warnings.map((w) => (
+                    <tr key={w.mobile}>
+                      <td>{w.mobile}</td><td>{w.name}</td><td>{w.statusValuesSeen.join(', ')}</td><td>{w.resolvedTo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -90,6 +201,8 @@ export default function UsersPage() {
 
   return (
     <div>
+      <BulkSurveyorImportCard onImported={load} />
+
       <div className="card">
         <h2>Create User</h2>
         <form onSubmit={handleCreate} className="flex-row" style={{ flexWrap: 'wrap' }}>

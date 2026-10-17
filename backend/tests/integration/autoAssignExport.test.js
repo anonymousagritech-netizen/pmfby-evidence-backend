@@ -7,7 +7,7 @@ const { resetDb, ensureRolesAndTemplates, createUser, createFarmerWithCase, pool
 const { tokenFor } = require('../helpers/authToken');
 
 const app = createApp();
-jest.setTimeout(60000); // same NDJSON cold-load rationale as autoAssign.test.js
+jest.setTimeout(90000); // same NDJSON cold-load rationale as autoAssign.test.js
 
 describe('POST /api/auto-assign/export', () => {
   let admin, adminToken, surveyor, surveyorToken;

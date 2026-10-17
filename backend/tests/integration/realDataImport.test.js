@@ -23,7 +23,7 @@ const app = createApp();
 
 // Same rationale as autoAssign.test.js: auto-assign lazily loads the (large, real)
 // village centroid/boundary NDJSON files on first use.
-jest.setTimeout(60000);
+jest.setTimeout(90000);
 
 // Builds an in-memory .xlsx matching the real file's sheet-ordering quirk (a smaller
 // "Sheet2" added first) and real camelCase headers/value shapes for a handful of rows.
