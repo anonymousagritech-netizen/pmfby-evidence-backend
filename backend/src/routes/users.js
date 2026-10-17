@@ -46,4 +46,62 @@ router.get('/', requireRole(ROLES.SUPER_ADMIN, ROLES.MANAGER), async (req, res, 
   }
 });
 
+// Update a user's own account fields (name/phone/scope) and/or active status.
+// Super Admin only. Deactivating immediately revokes access (authenticate middleware
+// re-checks is_active on every request from a fresh DB read, not just at login) — see
+// middleware/auth.js. An admin may not deactivate their own account (would be able to
+// lock every Super Admin out of the system with no one left to undo it).
+router.patch('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { name, phone, scopeStateId, scopeDistrictId, isActive } = req.body;
+    if (typeof isActive === 'boolean' && !isActive && req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot deactivate your own account' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE users SET
+         name = COALESCE($2, name),
+         phone = COALESCE($3, phone),
+         scope_state_id = COALESCE($4, scope_state_id),
+         scope_district_id = COALESCE($5, scope_district_id),
+         is_active = COALESCE($6, is_active),
+         updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL
+       RETURNING id, name, email, phone, is_active, scope_state_id, scope_district_id`,
+      [req.params.id, name || null, phone || null, scopeStateId || null, scopeDistrictId || null,
+        typeof isActive === 'boolean' ? isActive : null]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    await recordAudit(null, {
+      userId: req.user.id, action: typeof isActive === 'boolean' ? (isActive ? 'reactivate_user' : 'deactivate_user') : 'update_user',
+      resourceType: 'users', resourceId: req.params.id, metadata: { name, phone, scopeStateId, scopeDistrictId, isActive },
+    });
+    res.json({ user: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Soft-delete (account removal). Super Admin only, and may not delete self (same
+// no-self-lockout reasoning as deactivation above). Immutable audit trail (audit_logs
+// rows for this user's past actions are preserved — only the users row is soft-deleted,
+// never hard-deleted, so FK-referenced history stays intact).
+router.delete('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot delete your own account' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE users SET deleted_at = now(), is_active = false, updated_at = now()
+       WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    await recordAudit(null, { userId: req.user.id, action: 'delete_user', resourceType: 'users', resourceId: req.params.id });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
