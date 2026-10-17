@@ -13,6 +13,7 @@ const { pickWorksheet } = require('./importService');
 const importSessionStore = require('./importSessionStore');
 
 const EMAIL_DOMAIN = 'pmfby-evidence.local'; // matches the existing seed-data convention
+const MIN_PASSWORD_LENGTH = 8; // same rule POST /api/auth/change-password already enforces
 
 function normalizeMobile(raw) {
   if (raw === null || raw === undefined) return null;
@@ -56,6 +57,8 @@ async function parseAndGroupSurveyorFile(buffer) {
     else if (/^surveyorname$/.test(h)) headers.name = col;
     else if (/^surveyormobile$/.test(h)) headers.mobile = col;
     else if (/^status/.test(h)) headers.status = col; // "Status (Active/Inactive/Delete)"
+    else if (/^email$/.test(h)) headers.email = col; // optional — see below
+    else if (/^password$/.test(h)) headers.password = col; // optional — see below
   });
   if (!headers.mobile) throw new Error('Could not find a surveyorMobile column in this file');
 
@@ -71,15 +74,24 @@ async function parseAndGroupSurveyorFile(buffer) {
     const name = headers.name ? String(row.getCell(headers.name).value || '').trim() : '';
     const district = headers.district ? String(row.getCell(headers.district).value || '').trim() : '';
     const status = headers.status ? normalizeStatus(row.getCell(headers.status).value) : null;
+    // Optional admin-supplied credentials — "IN TEMPLATE I WANT PROPER NAME/MO./
+    // DISTRICT/EMAIL/PASSWORD.... TO IMPORT". Blank/missing falls back to the existing
+    // auto-generated synthetic email + random temp password behavior (see
+    // upsertSurveyor) — fully backward compatible with the simpler template already
+    // in use for the real 121-surveyor import.
+    const email = headers.email ? String(row.getCell(headers.email).value || '').trim() : '';
+    const password = headers.password ? String(row.getCell(headers.password).value || '').trim() : '';
 
     if (!groups.has(mobile)) {
-      groups.set(mobile, { mobile, name: '', districts: new Set(), statusesInOrder: [], rowCount: 0 });
+      groups.set(mobile, { mobile, name: '', districts: new Set(), statusesInOrder: [], rowCount: 0, email: '', password: '' });
     }
     const g = groups.get(mobile);
     g.rowCount += 1;
     if (name) g.name = name; // last non-empty name wins, same spirit as "latest status wins"
     if (district) g.districts.add(district);
     if (status) g.statusesInOrder.push(status);
+    if (email) g.email = email; // last non-empty wins, same spirit as name/status
+    if (password) g.password = password;
   }
 
   const result = [];
@@ -94,6 +106,9 @@ async function parseAndGroupSurveyorFile(buffer) {
       statusValuesSeen: distinctStatuses,
       finalStatus,
       statusConflict: distinctStatuses.length > 1,
+      email: g.email || null,
+      password: g.password || null,
+      passwordTooShort: !!g.password && g.password.length < MIN_PASSWORD_LENGTH,
     });
   }
   return { totalRows, groups: result };
@@ -110,6 +125,7 @@ async function createImportPreview({ buffer, originalFilename, uploadedBy }) {
     uniqueSurveyors: groups.length,
     noStatusCount: groups.filter((g) => !g.finalStatus).length,
     conflictCount: groups.filter((g) => g.statusConflict).length,
+    weakPasswordCount: groups.filter((g) => g.passwordTooShort).length,
     groups,
   };
 }
@@ -158,19 +174,36 @@ async function upsertSurveyor(client, group, importedBy) {
       // immediately inactive — preserves the real-world fact that this mobile is a
       // known surveyor (keeps home-district history), without granting login access.
     }
-    const email = `${group.mobile}@${EMAIL_DOMAIN}`;
-    const tempPassword = generateTempPassword();
-    const passwordHash = await hashPassword(tempPassword);
+    // Admin-supplied email/password (new optional template columns) win when present
+    // and valid; otherwise fall back to the original auto-generated behavior. A
+    // too-short admin-supplied password is NOT silently accepted — treated the same as
+    // "not supplied" (falls back to auto-gen) and flagged via usedFallbackPassword so
+    // the caller can warn about it, rather than either rejecting the whole row or
+    // quietly using a weak password.
+    const email = group.email || `${group.mobile}@${EMAIL_DOMAIN}`;
+    const useAdminPassword = !!group.password && group.password.length >= MIN_PASSWORD_LENGTH;
+    const tempPassword = useAdminPassword ? null : generateTempPassword();
+    const passwordHash = await hashPassword(useAdminPassword ? group.password : tempPassword);
+    // An admin who explicitly set a real password intends the surveyor to use it
+    // as-is, not treat it as a one-time temp credential — only auto-generated
+    // passwords force an immediate change.
+    const forcePasswordChange = !useAdminPassword;
     const { rows } = await client.query(
       `INSERT INTO users (name, email, phone, password_hash, role_id, home_district_ids, is_active, force_password_change)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING id`,
-      [group.name, email, group.mobile, passwordHash, surveyorRoleId, group.districts, wantActive]
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [group.name, email, group.mobile, passwordHash, surveyorRoleId, group.districts, wantActive, forcePasswordChange]
     );
     // tempPassword is returned here ONLY so commitSurveyorImport can hand it back to
     // the caller once, at creation time (see credentials[] below) — it is never
     // written to audit_logs or anywhere else persistent. There is no way to recover it
-    // after this response; a lost password needs a real reset, not a lookup.
-    return { action: 'created', mobile: group.mobile, userId: rows[0].id, email, finalStatus: group.finalStatus, tempPassword };
+    // after this response; a lost password needs a real reset, not a lookup. When the
+    // admin supplied their own password, there is nothing to show back (they already
+    // know it) — tempPassword stays null and this account is excluded from
+    // `credentials`.
+    return {
+      action: 'created', mobile: group.mobile, userId: rows[0].id, email, finalStatus: group.finalStatus,
+      tempPassword, usedAdminSuppliedPassword: useAdminPassword,
+    };
   }
 
   // Existing account: re-upload upsert — update districts + status; never touch
@@ -252,6 +285,25 @@ async function commitSurveyorImport({ sessionId, importedBy }) {
   return { summary, warnings, changeLog, credentials };
 }
 
+// Template columns kept in sync with parseAndGroupSurveyorFile's header matching above
+// (one definition, read by both) — districtName/surveyorName/surveyorMobile/Status are
+// the original real-file columns; email/password are the newer optional ones ("IN
+// TEMPLATE I WANT PROPER NAME/MO./DISTRICT/EMAIL/PASSWORD.... TO IMPORT").
+async function buildSurveyorImportTemplateWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const sheet = wb.addWorksheet('Sheet1');
+  sheet.addRow(['districtName', 'surveyorName', 'surveyorMobile', 'Status (Active/Inactive/Delete)', 'email', 'password']);
+  sheet.addRow(['Palwal', 'EXAMPLE Ramesh Kumar', '9999999999', 'Active', '', '']);
+  sheet.addRow(['Faridabad', 'EXAMPLE Suresh Singh', '9888888888', 'Active', 'suresh@example.com', 'ChosenPassw0rd!']);
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).getCell(4).note = 'Status must be exactly: Active, Inactive, or Delete.';
+  sheet.getRow(1).getCell(5).note = 'Optional — leave blank to auto-generate a synthetic login email from the mobile number.';
+  sheet.getRow(1).getCell(6).note = 'Optional — leave blank to auto-generate a random temp password (min 8 chars if you do set one).';
+  for (let r = 2; r <= 3; r += 1) sheet.getRow(r).font = { italic: true, color: { argb: 'FF888888' } };
+  sheet.columns.forEach((col) => { col.width = 22; });
+  return wb.xlsx.writeBuffer();
+}
+
 module.exports = {
   parseAndGroupSurveyorFile,
   createImportPreview,
@@ -259,4 +311,5 @@ module.exports = {
   normalizeMobile,
   normalizeStatus,
   generateTempPassword,
+  buildSurveyorImportTemplateWorkbook,
 };

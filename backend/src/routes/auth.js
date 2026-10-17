@@ -6,16 +6,24 @@ const { recordAudit } = require('../services/auditLog');
 
 const router = express.Router();
 
+// "USER WILL LOGIN USING MO. AND PASSWORD" — a bulk-imported surveyor only knows their
+// mobile number, never the synthetic {mobile}@pmfby-evidence.local email. `identifier`
+// accepts either: matched against `email` when it looks like an email address, against
+// `phone` otherwise (additive — existing email-based logins for Super Admin/Manager
+// accounts are unaffected). Kept as the same `email` request-body field name for
+// backward compatibility with any existing caller still sending `email`.
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+    const identifier = (req.body.email || req.body.identifier || '').trim();
+    const { password } = req.body;
+    if (!identifier || !password) return res.status(400).json({ error: 'email (or mobile number) and password required' });
 
+    const looksLikeEmail = identifier.includes('@');
     const { rows } = await pool.query(
       `SELECT u.*, r.key AS role_key, r.name AS role_name
        FROM users u JOIN roles r ON r.id = u.role_id
-       WHERE u.email = $1 AND u.deleted_at IS NULL`,
-      [email]
+       WHERE u.deleted_at IS NULL AND ${looksLikeEmail ? 'u.email = $1' : 'u.phone = $1'}`,
+      [identifier]
     );
     const user = rows[0];
     if (!user || !user.is_active) return res.status(401).json({ error: 'Invalid credentials' });

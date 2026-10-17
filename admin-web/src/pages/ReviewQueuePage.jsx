@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
+import { ShieldAlert, Flag, GitMerge, History, Lock } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import Card from '../components/Card';
+import DataGrid from '../components/DataGrid';
+import { StatusBadge } from '../components/StatusBadge';
 
 export default function ReviewQueuePage() {
   const { user } = useAuth();
@@ -40,88 +44,76 @@ export default function ReviewQueuePage() {
 
   return (
     <div>
-      <div className="card">
-        <h2>Emergency / Forceful-Survey Incidents</h2>
-        <p className="help-text">
-          A flagged case cannot be reassigned or closed until resolved here (enforced
-          server-side).
-        </p>
-        <table>
-          <thead><tr><th>Type</th><th>Status</th><th>Started</th><th>Review</th><th></th></tr></thead>
-          <tbody>
-            {incidents.map((i) => (
-              <tr key={i.id}>
-                <td>{i.incident_type}</td>
-                <td><span className="badge">{i.status}</span></td>
-                <td>{new Date(i.started_at).toLocaleString()}</td>
-                <td>{i.resolved_at ? 'Resolved' : <span style={{ color: 'var(--danger)' }}>Needs review</span>}</td>
-                <td>{!i.resolved_at && <button className="secondary" onClick={() => resolveIncident(i.id)}>Mark Reviewed</button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Emergency / Forceful-Survey Incidents" icon={ShieldAlert} accent="rose">
+        <p className="help-text">A flagged case can't be reassigned/closed until resolved here.</p>
+        <DataGrid
+          columns={[
+            { key: 'incident_type', label: 'Type', sortable: true },
+            { key: 'status', label: 'Status', sortable: true, render: (i) => <StatusBadge status={i.status} /> },
+            { key: 'started_at', label: 'Started', sortable: true, render: (i) => new Date(i.started_at).toLocaleString() },
+            { key: 'review', label: 'Review', sortable: false, render: (i) => (i.resolved_at ? <StatusBadge status="completed" /> : <span className="badge denied">Needs review</span>) },
+            { key: 'actions', label: '', sortable: false, render: (i) => (!i.resolved_at && <button className="secondary sm" onClick={() => resolveIncident(i.id)}>Mark Reviewed</button>) },
+          ]}
+          rows={incidents}
+          emptyMessage="No emergency incidents."
+          height={320}
+        />
+      </Card>
 
-      <div className="card">
-        <h2>Suspected Discrepancy Flags</h2>
-        <table>
-          <thead><tr><th>Reason</th><th>Description</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            {flags.map((f) => (
-              <tr key={f.id}>
-                <td>{f.reason}</td>
-                <td>{f.description}</td>
-                <td><span className="badge">{f.status}</span></td>
-                <td>{f.status === 'pending' && <button className="secondary" onClick={() => reviewFlag(f.id)}>Mark Reviewed</button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Suspected Discrepancy Flags" icon={Flag} accent="amber">
+        <DataGrid
+          columns={[
+            { key: 'reason', label: 'Reason', sortable: true },
+            { key: 'description', label: 'Description', sortable: false },
+            { key: 'status', label: 'Status', sortable: true, render: (f) => <StatusBadge status={f.status} /> },
+            { key: 'actions', label: '', sortable: false, render: (f) => (f.status === 'pending' && <button className="secondary sm" onClick={() => reviewFlag(f.id)}>Mark Reviewed</button>) },
+          ]}
+          rows={flags}
+          emptyMessage="No discrepancy flags."
+          height={320}
+        />
+      </Card>
 
-      <div className="card">
-        <h2>Docket Conflict Warnings</h2>
-        <p className="help-text">Same Docket_ID2 appearing across multiple source surveyors — possible stale attempts.</p>
-        <table>
-          <thead><tr><th>Docket_ID2</th><th>Case rows</th><th>Distinct source surveyors</th></tr></thead>
-          <tbody>
-            {conflicts.map((c) => (
-              <tr key={c.docket_id2}>
-                <td>{c.docket_id2}</td>
-                <td>{c.case_row_count}</td>
-                <td>{c.distinct_source_surveyors}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Docket Conflict Warnings" icon={GitMerge} accent="violet">
+        <p className="help-text">Same Docket_ID2 across multiple source surveyors — possible stale attempts.</p>
+        <DataGrid
+          columns={[
+            { key: 'docket_id2', label: 'Docket ID2', sortable: true },
+            { key: 'case_row_count', label: 'Case rows', sortable: true },
+            { key: 'distinct_source_surveyors', label: 'Distinct source surveyors', sortable: true },
+          ]}
+          rows={conflicts}
+          emptyMessage="No docket conflicts."
+          height={300}
+        />
+      </Card>
 
-      <div className="card">
-        <h2>Per-Surveyor History</h2>
-        <table>
-          <thead><tr><th>Surveyor</th><th>Disputes</th><th>Fraud flags raised</th><th>Emergencies</th></tr></thead>
-          <tbody>
-            {surveyorHistory.map((s) => (
-              <tr key={s.user_id}>
-                <td>{s.name}</td><td>{s.disputes_count}</td><td>{s.fraud_flags_raised_count}</td><td>{s.emergencies_count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Per-Surveyor History" icon={History} accent="teal">
+        <DataGrid
+          columns={[
+            { key: 'name', label: 'Surveyor', sortable: true },
+            { key: 'disputes_count', label: 'Disputes', sortable: true },
+            { key: 'fraud_flags_raised_count', label: 'Fraud flags raised', sortable: true },
+            { key: 'emergencies_count', label: 'Emergencies', sortable: true },
+          ]}
+          rows={surveyorHistory}
+          emptyMessage="No surveyor history yet."
+          height={320}
+        />
+      </Card>
 
       {user?.roleKey === 'super_admin' && (
-        <div className="card">
-          <h2>Integrity Concerns (Confidential — Super Admin only)</h2>
-          <table>
-            <thead><tr><th>Description</th><th>Reported At</th></tr></thead>
-            <tbody>
-              {concerns.map((c) => (
-                <tr key={c.id}><td>{c.description}</td><td>{new Date(c.created_at).toLocaleString()}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Card title="Integrity Concerns (Confidential — Super Admin only)" icon={Lock} accent="navy">
+          <DataGrid
+            columns={[
+              { key: 'description', label: 'Description', sortable: false, flex: 2 },
+              { key: 'created_at', label: 'Reported At', sortable: true, render: (c) => new Date(c.created_at).toLocaleString() },
+            ]}
+            rows={concerns}
+            emptyMessage="No integrity concerns reported."
+            height={280}
+          />
+        </Card>
       )}
     </div>
   );

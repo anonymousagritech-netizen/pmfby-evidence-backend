@@ -14,10 +14,27 @@ const STATUS_COLORS = {
 };
 const PRIORITY_COLORS = { P1: 'var(--p1-dot)', P2: 'var(--p2-dot)', P3: 'var(--p3-dot)', unknown: 'var(--neutral-300)' };
 
-function BarChart({ rows, colorMap, labelKey, valueKey }) {
+// Fixed min-height regardless of data state so two chart cards side-by-side never
+// end up visibly different heights (one shrinking to near-zero when its rows array is
+// empty while its sibling stays tall) — the empty state fills the same space a few
+// real bars would, with a centered caption instead of a collapsed blank strip.
+const CHART_MIN_HEIGHT = 160;
+
+function BarChart({ rows, colorMap, labelKey, valueKey, emptyMessage = 'No data yet.' }) {
+  if (rows.length === 0) {
+    return (
+      <div style={{
+        minHeight: CHART_MIN_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        textAlign: 'center', color: 'var(--neutral-500)', fontSize: 13, padding: '0 20px',
+      }}
+      >
+        {emptyMessage}
+      </div>
+    );
+  }
   const max = Math.max(1, ...rows.map((r) => r[valueKey]));
   return (
-    <div>
+    <div style={{ minHeight: CHART_MIN_HEIGHT }}>
       {rows.map((r) => (
         <div className="bar-chart-row" key={r[labelKey]}>
           <span className="bar-chart-label">{r[labelKey].replace(/_/g, ' ')}</span>
@@ -91,16 +108,20 @@ export default function DashboardPage() {
           <div className="flex-row" style={{ alignItems: 'stretch', flexWrap: 'wrap', gap: 22 }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card title="Cases by Status" icon={BarChart3} accent="teal">
-                <BarChart rows={summary.byStatus} colorMap={STATUS_COLORS} labelKey="contact_status" valueKey="count" />
+                <BarChart
+                  rows={summary.byStatus} colorMap={STATUS_COLORS} labelKey="contact_status" valueKey="count"
+                  emptyMessage="No case data yet — import an Excel file to get started."
+                />
+                <p className="help-text" style={{ marginTop: 10 }}>Every imported case, grouped by its current contact status.</p>
               </Card>
             </div>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card title="Open Cases by Priority" icon={PieChart} accent="amber">
-                <BarChart rows={summary.byPriority} colorMap={PRIORITY_COLORS} labelKey="priority" valueKey="count" />
-                <p className="help-text" style={{ marginTop: 10 }}>
-                  Priority here uses a default 10-day TAT for a quick at-a-glance view —
-                  an actual Auto-Assign run uses the TAT/cutoffs you set for that run.
-                </p>
+                <BarChart
+                  rows={summary.byPriority} colorMap={PRIORITY_COLORS} labelKey="priority" valueKey="count"
+                  emptyMessage="No case data yet — import an Excel file to get started."
+                />
+                <p className="help-text" style={{ marginTop: 10 }}>Default 10-day TAT view — an Auto-Assign run uses its own TAT/cutoffs.</p>
               </Card>
             </div>
           </div>

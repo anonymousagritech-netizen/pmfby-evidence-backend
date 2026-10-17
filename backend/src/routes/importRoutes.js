@@ -2,13 +2,28 @@ const express = require('express');
 const multer = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/rbac');
-const { createImportPreview, commitImport } = require('../services/importService');
+const { createImportPreview, commitImport, buildImportTemplateWorkbook } = require('../services/importService');
 const { pool } = require('../db/pool');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 router.use(authenticate, requireRole(ROLES.SUPER_ADMIN));
+
+// Downloadable blank/example .xlsx matching exactly the real-world column headers this
+// importer recognizes (kept in sync with importService.js's own column list — the
+// generator and the importer read the same source of truth, so this can't drift out of
+// sync with what the importer actually expects).
+router.get('/template', async (req, res, next) => {
+  try {
+    const buffer = await buildImportTemplateWorkbook();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="case-import-template.xlsx"');
+    res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Step 1: upload Excel, get back a proposed column mapping + data preview. Nothing is
 // committed to the DB yet.

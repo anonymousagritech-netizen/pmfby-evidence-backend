@@ -22,6 +22,19 @@ function downloadCredentialsCsv(credentials) {
   URL.revokeObjectURL(url);
 }
 
+// Downloads a server-generated blank/example .xlsx (template) for an Excel upload
+// feature — reused by both the case-import and bulk-surveyor-import "Download
+// Template" buttons.
+async function downloadTemplate(path, filename) {
+  const res = await api.get(path, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const ROLE_OPTIONS = [
   { key: 'super_admin', label: 'Super Admin' },
   { key: 'manager', label: 'State/District Manager' },
@@ -78,9 +91,14 @@ function BulkSurveyorImportCard({ onImported }) {
   return (
     <Card title="Bulk Surveyor Import" icon={UploadCloud} accent="teal">
       <p className="help-text">
-        Columns: districtName, surveyorName, surveyorMobile, Status. Deduped by mobile; Status drives create/activate/deactivate/delete.
+        Columns: districtName, surveyorName, surveyorMobile, Status (+ optional email, password). Deduped by mobile; Status drives create/activate/deactivate/delete.
       </p>
-      <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={busy} />
+      <div className="flex-row" style={{ flexWrap: 'wrap' }}>
+        <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={busy} />
+        <button type="button" className="secondary sm" onClick={() => downloadTemplate('/users/bulk-import/template', 'surveyor-import-template.xlsx')}>
+          <Download size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Download Template
+        </button>
+      </div>
       {error && <div className="error-text">{error}</div>}
 
       {preview && (

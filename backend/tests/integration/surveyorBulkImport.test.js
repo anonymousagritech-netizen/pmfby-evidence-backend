@@ -34,6 +34,29 @@ async function doImport(adminToken, rows) {
   return commitRes.body;
 }
 
+// Extended template with the new optional email/password columns — "IN TEMPLATE I
+// WANT PROPER NAME/MO./DISTRICT/EMAIL/PASSWORD.... TO IMPORT".
+async function buildBufferWithCredentials(rows) {
+  const wb = new ExcelJS.Workbook();
+  const sheet = wb.addWorksheet('Sheet1');
+  sheet.addRow(['districtName', 'surveyorName', 'surveyorMobile', 'Status (Active/Inactive/Delete)', 'email', 'password']);
+  for (const r of rows) sheet.addRow(r);
+  return wb.xlsx.writeBuffer();
+}
+
+async function doImportWithCredentials(adminToken, rows) {
+  const buffer = await buildBufferWithCredentials(rows);
+  const previewRes = await request(app).post('/api/users/bulk-import/preview')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .attach('file', Buffer.from(buffer), 'surveyors.xlsx');
+  expect(previewRes.status).toBe(200);
+  const commitRes = await request(app).post('/api/users/bulk-import/commit')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ sessionId: previewRes.body.sessionId });
+  expect(commitRes.status).toBe(200);
+  return commitRes.body;
+}
+
 describe('Bulk surveyor import: RBAC', () => {
   let adminToken, surveyorToken;
 
@@ -229,8 +252,6 @@ describe('End-to-end: temp password -> forced change -> old password revoked', (
     adminToken = tokenFor(admin, 'super_admin');
   });
 
-  afterAll(async () => { await closePool(); });
-
   test('full lifecycle: temp password logs in and forces a change; new password works; old temp password is rejected afterward', async () => {
     const result = await doImport(adminToken, [
       ['Palwal', 'E2E Surveyor', 9000000200, 'Active'],
@@ -267,5 +288,94 @@ describe('End-to-end: temp password -> forced change -> old password revoked', (
     const newLogin = await request(app).post('/api/auth/login').send({ email: cred.email, password: 'MyRealPassword1!' });
     expect(newLogin.status).toBe(200);
     expect(newLogin.body.user.forcePasswordChange).toBe(false);
+  });
+});
+
+describe('Bulk import: optional admin-supplied email/password columns', () => {
+  let adminToken;
+
+  beforeAll(async () => {
+    await resetDb();
+    await ensureRolesAndTemplates();
+    const admin = await createUser({ name: 'Cred Admin', email: 'cred-admin@test.local', roleKey: 'super_admin' });
+    adminToken = tokenFor(admin, 'super_admin');
+  });
+
+  test('a row with an explicit email+password creates the account with THAT exact password, no forced change, and is not returned in credentials[]', async () => {
+    const result = await doImportWithCredentials(adminToken, [
+      ['Palwal', 'Explicit Creds', 9100000001, 'Active', 'explicit@example.com', 'MyChosenPassw0rd!'],
+    ]);
+    expect(result.summary.created).toBe(1);
+    expect(result.credentials).toHaveLength(0); // admin already knows the password they set
+
+    const { rows } = await pool.query('SELECT * FROM users WHERE phone = $1', ['9100000001']);
+    expect(rows[0].email).toBe('explicit@example.com');
+    expect(rows[0].force_password_change).toBe(false);
+
+    const matches = await verifyPassword('MyChosenPassw0rd!', rows[0].password_hash);
+    expect(matches).toBe(true);
+
+    const loginRes = await request(app).post('/api/auth/login').send({ email: 'explicit@example.com', password: 'MyChosenPassw0rd!' });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user.forcePasswordChange).toBe(false);
+  });
+
+  test('a row with email/password columns present but BLANK falls back to auto-generated synthetic email + temp password', async () => {
+    const result = await doImportWithCredentials(adminToken, [
+      ['Palwal', 'Fallback Creds', 9100000002, 'Active', '', ''],
+    ]);
+    expect(result.summary.created).toBe(1);
+    expect(result.credentials).toHaveLength(1);
+    expect(result.credentials[0].email).toBe('9100000002@pmfby-evidence.local');
+
+    const { rows } = await pool.query('SELECT * FROM users WHERE phone = $1', ['9100000002']);
+    expect(rows[0].force_password_change).toBe(true);
+  });
+
+  test('an admin-supplied password shorter than the minimum is rejected (falls back to auto-gen, not silently accepted)', async () => {
+    const result = await doImportWithCredentials(adminToken, [
+      ['Palwal', 'Weak Password', 9100000003, 'Active', 'weak@example.com', 'short'],
+    ]);
+    expect(result.summary.created).toBe(1);
+    // Falls back to auto-gen temp password (shown once) rather than using the weak one.
+    expect(result.credentials).toHaveLength(1);
+    const { rows } = await pool.query('SELECT force_password_change, password_hash FROM users WHERE phone = $1', ['9100000003']);
+    expect(rows[0].force_password_change).toBe(true);
+    const weakMatches = await verifyPassword('short', rows[0].password_hash);
+    expect(weakMatches).toBe(false);
+  });
+});
+
+describe('Login by mobile number (additive — email login still works)', () => {
+  let adminToken;
+
+  beforeAll(async () => {
+    await resetDb();
+    await ensureRolesAndTemplates();
+    const admin = await createUser({ name: 'Mobile Login Admin', email: 'mobile-admin@test.local', roleKey: 'super_admin' });
+    adminToken = tokenFor(admin, 'super_admin');
+  });
+
+  afterAll(async () => { await closePool(); });
+
+  test('a bulk-imported surveyor can log in with raw mobile number + password (no email needed)', async () => {
+    const result = await doImport(adminToken, [
+      ['Palwal', 'Mobile Login Surveyor', 9100000050, 'Active'],
+    ]);
+    const cred = result.credentials[0];
+
+    const mobileLogin = await request(app).post('/api/auth/login').send({ email: cred.mobile, password: cred.tempPassword });
+    expect(mobileLogin.status).toBe(200);
+    expect(mobileLogin.body.user.email).toBe(cred.email);
+  });
+
+  test('email-based login for a real-email account (e.g. Super Admin) still works unaffected', async () => {
+    const res = await request(app).post('/api/auth/login').send({ email: 'mobile-admin@test.local', password: 'TestPass123!' });
+    expect(res.status).toBe(200);
+  });
+
+  test('an unknown mobile number is rejected the same as an unknown email', async () => {
+    const res = await request(app).post('/api/auth/login').send({ email: '9999999999', password: 'whatever' });
+    expect(res.status).toBe(401);
   });
 });

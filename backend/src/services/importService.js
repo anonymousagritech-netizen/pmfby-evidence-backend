@@ -316,10 +316,59 @@ async function commitImport({ sessionId, confirmedMapping, uploadedBy }) {
   return { summary, rowLog };
 }
 
+// Real-world column headers (camelCase), exactly as seen in the actual production
+// sample this importer was validated against (see ROADMAP.md "Real-data validation
+// pass") — not the Docket_ID2-style canonical field names, the raw headers an admin's
+// own export tool would produce, so a downloaded template matches what they'd actually
+// paste data into. One EXAMPLE row with plausible values, clearly marked to delete.
+const TEMPLATE_HEADERS = [
+  'docketID', 'seasonName', 'schemeName', 'applicationNo', 'farmerName',
+  'typeOfIncidence', 'dateOfIncidence', 'cropStatusAtIncidence', 'farmerIntimationDate',
+  'sowingDate', 'farmArea', 'cropName', 'stateName', 'stateID', 'districtID', 'districtName',
+  'level4Name', 'level4ID', 'level5Name', 'level5ID', 'level6Name', 'level6ID',
+  'level7Name', 'level7ID', 'landSurveyNumber', 'landDivisionNumber',
+  'insuranceCompanyName', 'surveyAgencyName', 'applicationSourceOrigin',
+  'surveyorName', 'surveyorMobile', 'latitude', 'longitude', 'surveyAssignedOn',
+  'intimationAssignDeadline', 'surveyStatus', 'isFarmerPresent',
+  'villagersRelation', 'villagersName', 'villagersMobile', 'ASSIGN',
+];
+const TEMPLATE_EXAMPLE_ROW = {
+  docketID: '040106260002542975', seasonName: 'KHARIF', schemeName: 'PMFBY',
+  applicationNo: '040106261031541068110', farmerName: 'EXAMPLE Jogender Singh',
+  typeOfIncidence: 'Unseasonal Rains', dateOfIncidence: '2026-10-12',
+  cropStatusAtIncidence: 'Harvested', farmerIntimationDate: '2026-10-13',
+  sowingDate: '2026-07-01', farmArea: 0.0683, cropName: 'Paddy (Dhan)',
+  stateName: 'HARYANA', stateID: '5C77DA4F-BC9B-4099-BED7-15E06A45F376',
+  districtID: 'C8F18EC8-9F46-4C5F-A333-9DD719AF15AF', districtName: 'Palwal',
+  level4Name: 'Palwal', level4ID: 'D32B60AD-41DD-40E5-B6C5-E69C855F3E2B',
+  level5Name: 'Palwal', level5ID: '6131CFC7-03ED-44FC-9775-F6885944D49A',
+  level6Name: 'Janoli', level6ID: 'E6BB7211-A35E-4A81-9543-96DC5B55BD5E',
+  level7Name: 'Janauli(45)', level7ID: '38C308F0-7483-47E2-974D-AB56B07EEEF6',
+  landSurveyNumber: '67//6/1', landDivisionNumber: '200',
+  insuranceCompanyName: 'EXAMPLE INSURANCE COMPANY LIMITED',
+  surveyAgencyName: 'EXAMPLE Survey Agency Pvt Ltd', applicationSourceOrigin: 'KRPH',
+  surveyorName: 'EXAMPLE Surveyor', surveyorMobile: '9999999999',
+  latitude: 29.43, longitude: 77.32, surveyAssignedOn: '2026-10-14',
+  intimationAssignDeadline: 'Active', surveyStatus: 'Survey Agency Assigned',
+  isFarmerPresent: 'No', villagersRelation: '', villagersName: '', villagersMobile: '', ASSIGN: '',
+};
+
+async function buildImportTemplateWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const sheet = wb.addWorksheet('Sheet1');
+  sheet.addRow(TEMPLATE_HEADERS);
+  sheet.addRow(TEMPLATE_HEADERS.map((h) => TEMPLATE_EXAMPLE_ROW[h] ?? ''));
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(2).font = { italic: true, color: { argb: 'FF888888' } };
+  sheet.columns.forEach((col) => { col.width = 20; });
+  return wb.xlsx.writeBuffer();
+}
+
 module.exports = {
   parseWorkbookBuffer,
   createImportPreview,
   commitImport,
   applyVillageAutoCorrection,
   pickWorksheet,
+  buildImportTemplateWorkbook,
 };

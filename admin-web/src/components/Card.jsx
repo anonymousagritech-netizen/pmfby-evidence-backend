@@ -2,9 +2,9 @@
 // weight per section" treatment: box-shadow, rounded corners, a colored top border
 // that varies by accent (navy/teal/violet/amber/rose) so sections read as visually
 // distinct rather than one undifferentiated white box after another.
-export default function Card({ title, icon: Icon, accent = 'navy', children, actions }) {
+export default function Card({ title, icon: Icon, accent = 'navy', children, actions, style }) {
   return (
-    <div className={`panel panel-${accent}`}>
+    <div className={`panel panel-${accent}`} style={{ display: 'flex', flexDirection: 'column', height: '100%', ...style }}>
       {(title || Icon) && (
         <div className="panel-header">
           {Icon && <span className="panel-icon"><Icon size={14} /></span>}
@@ -12,7 +12,7 @@ export default function Card({ title, icon: Icon, accent = 'navy', children, act
           {actions && <div className="panel-actions">{actions}</div>}
         </div>
       )}
-      <div className="panel-body">{children}</div>
+      <div className="panel-body" style={{ flex: 1 }}>{children}</div>
     </div>
   );
 }

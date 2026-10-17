@@ -29,8 +29,8 @@ export default function LoginPage() {
       <form className="login-box" onSubmit={handleSubmit}>
         <h1>PMFBY Evidence — Admin Login</h1>
         <div className="form-row">
-          <label>Email</label>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
+          <label>Email or Mobile Number</label>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="text" required />
         </div>
         <div className="form-row">
           <label>Password</label>

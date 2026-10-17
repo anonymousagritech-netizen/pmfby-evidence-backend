@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Workflow, ClipboardList } from 'lucide-react';
 import { api } from '../api/client';
+import Card from '../components/Card';
+import DataGrid from '../components/DataGrid';
 
 export default function AssignmentsPage() {
   const [assignments, setAssignments] = useState([]);
@@ -38,9 +41,8 @@ export default function AssignmentsPage() {
 
   return (
     <div>
-      <div className="card">
-        <h2>Assign / Reassign Farmer</h2>
-        <form onSubmit={handleAssign} className="flex-row">
+      <Card title="Assign / Reassign Farmer" icon={Workflow} accent="violet">
+        <form onSubmit={handleAssign} className="flex-row" style={{ flexWrap: 'wrap' }}>
           <select value={farmerId} onChange={(e) => setFarmerId(e.target.value)} required>
             <option value="">Select farmer...</option>
             {farmers.map((f) => <option key={f.id} value={f.id}>{f.farmer_name} ({f.village_name})</option>)}
@@ -53,24 +55,21 @@ export default function AssignmentsPage() {
         </form>
         {error && <div className="error-text">{error}</div>}
         {message && <div style={{ color: 'var(--success)', marginTop: 8 }}>{message}</div>}
-      </div>
+      </Card>
 
-      <div className="card">
-        <h3>Active Assignments</h3>
-        <table>
-          <thead><tr><th>Farmer</th><th>Village</th><th>Assigned To</th><th>Assigned At</th></tr></thead>
-          <tbody>
-            {assignments.map((a) => (
-              <tr key={a.id}>
-                <td>{a.farmer_name}</td>
-                <td>{a.village_name}</td>
-                <td>{a.assigned_to_name}</td>
-                <td>{new Date(a.assigned_at).toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Active Assignments" icon={ClipboardList} accent="teal">
+        <DataGrid
+          columns={[
+            { key: 'farmer_name', label: 'Farmer', sortable: true },
+            { key: 'village_name', label: 'Village', sortable: true },
+            { key: 'assigned_to_name', label: 'Assigned To', sortable: true },
+            { key: 'assigned_at', label: 'Assigned At', sortable: true, render: (a) => new Date(a.assigned_at).toLocaleString() },
+          ]}
+          rows={assignments}
+          searchKeys={['farmer_name', 'village_name', 'assigned_to_name']}
+          emptyMessage="No active assignments."
+        />
+      </Card>
     </div>
   );
 }

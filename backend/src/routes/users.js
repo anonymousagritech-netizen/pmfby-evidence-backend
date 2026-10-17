@@ -11,6 +11,19 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 router.use(authenticate);
 
+// Downloadable blank/example .xlsx for the bulk surveyor import — columns kept in sync
+// with surveyorImportService.js's own header-matching (one source of truth).
+router.get('/bulk-import/template', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const buffer = await surveyorImportService.buildSurveyorImportTemplateWorkbook();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="surveyor-import-template.xlsx"');
+    res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Bulk surveyor import: preview (parse + dedupe-by-mobile + aggregate districts, no
 // writes) then commit (upsert users per the Status column's lifecycle rules). See
 // surveyorImportService.js and ROADMAP.md for the dedupe/lifecycle/credential design.
