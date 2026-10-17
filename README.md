@@ -71,9 +71,10 @@ DATABASE_URL=$TEST_DATABASE_URL npx node-pg-migrate -j js -m src/db/migrations u
 npm test                  # unit + integration, real Postgres, forceExit
 ```
 
-**Actual result when run in this build:** `11 suites, 63 tests, 63 passed, 0 failed`
-(33 unit + 30 integration, including the required cross-tenant-isolation test and the
-manager-can-download-any-ZIP-in-scope test).
+**Actual result when run in this build:** `12 suites, 69 tests, 69 passed, 0 failed`
+(33 unit + 36 integration, including the required cross-tenant-isolation test, the
+manager-can-download-any-ZIP-in-scope test, and the user deactivate/reactivate/delete
+lifecycle test added in this pass — `tests/integration/users.test.js`).
 
 If Postgres truly cannot be reached in some other environment: this codebase has no
 pg-mem/sqlite fallback wired in (real Postgres was reachable here, so none was needed).
@@ -88,7 +89,7 @@ cd admin-web
 npm install
 cp .env.example .env       # VITE_API_BASE_URL, default http://localhost:4000/api
 npm run dev                 # http://localhost:5173
-npm run build                # verified: builds cleanly (238KB JS, gzip 78KB)
+npm run build                # verified: builds cleanly (~243KB JS, gzip ~79KB)
 ```
 
 ## Mobile client (superseded — now a separate repo)
@@ -135,7 +136,7 @@ and `backend/src/services/resourceScope.js`; never trusted from the frontend)
 |---|---|---|---|
 | Import Excel (preview + commit) | Yes | No | No |
 | Configure message templates | Yes | No | No |
-| Create users / assign roles | Yes | No | No |
+| Create / deactivate / reactivate / delete (soft) users | Yes | No | No |
 | Assign / reassign farmers | Yes | No | No |
 | View org-wide farmers/cases/evidence | Yes | Within geographic scope only | Only own actively-assigned farmers |
 | Call / SMS / evidence / emergency actions | N/A (not a field role) | N/A (view/monitor only) | Own assignments only |

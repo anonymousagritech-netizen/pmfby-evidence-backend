@@ -1,5 +1,20 @@
 # ROADMAP.md — Deferred / Future Work (backend + admin web repo)
 
+**Gap-filling audit pass:** this repo was re-audited item-by-item against the full
+product spec (roles/RBAC, Excel import + AI column mapping, mandatory outcome
+resolution, field-reality/fraud handling items 1-8, SMS template wording, evidence/ZIP
+structure, and every admin-web screen). Nearly everything was already implemented and
+tested; the one confirmed real gap was **user account lifecycle management**
+(deactivate/reactivate/soft-delete) — `POST /api/users` and `GET /api/users` already
+existed, but there was no way to deactivate or remove a user short of touching the
+database directly, and admin-web had no Users screen at all. Both were added in this
+pass (`backend/src/routes/users.js` PATCH/DELETE, `admin-web/src/pages/UsersPage.jsx`,
+6 new integration tests in `backend/tests/integration/users.test.js`) with a
+no-self-lockout guard (an admin cannot deactivate or delete their own account) and an
+immutable audit trail (soft-delete only; `audit_logs` rows for a deleted user's past
+actions are preserved). Everything else below was already true before this pass and
+remains accurately described.
+
 **Repo-split note:** the "Android native rebuild" item below describes a proposal that
 has since been **carried out** — see `../android-kotlin/` (new repo, native
 Kotlin/Jetpack Compose) and the "Repo split note" in `IMPLEMENTATION_PLAN.md`. The item
