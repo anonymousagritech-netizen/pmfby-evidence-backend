@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import DataTable from '../components/DataTable';
+import { StatusBadge } from '../components/StatusBadge';
 
 const ROLE_OPTIONS = [
   { key: 'super_admin', label: 'Super Admin' },
@@ -47,6 +49,33 @@ export default function UsersPage() {
     }
   }
 
+  const [districtDraft, setDistrictDraft] = useState({}); // userId -> text input value
+
+  async function addHomeDistrict(u) {
+    const value = (districtDraft[u.id] || '').trim();
+    if (!value) return;
+    const current = u.home_district_ids || [];
+    if (current.includes(value)) return;
+    setError(null);
+    try {
+      await api.patch(`/users/${u.id}`, { homeDistrictIds: [...current, value] });
+      setDistrictDraft({ ...districtDraft, [u.id]: '' });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update home districts');
+    }
+  }
+
+  async function removeHomeDistrict(u, districtId) {
+    setError(null);
+    try {
+      await api.patch(`/users/${u.id}`, { homeDistrictIds: (u.home_district_ids || []).filter((d) => d !== districtId) });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update home districts');
+    }
+  }
+
   async function handleDelete(u) {
     setError(null);
     // eslint-disable-next-line no-alert
@@ -87,35 +116,59 @@ export default function UsersPage() {
           actions remain in the audit trail. You cannot deactivate or delete your own
           account.
         </p>
-        <table>
-          <thead>
-            <tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th>Scope</th><th>Status</th><th></th></tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.name}</td>
-                <td>{u.email}</td>
-                <td>{u.phone || '-'}</td>
-                <td>{u.role_key}</td>
-                <td>{u.scope_district_id || u.scope_state_id || '-'}</td>
-                <td><span className="badge">{u.is_active ? 'Active' : 'Deactivated'}</span></td>
-                <td>
-                  {u.id !== currentUser?.id && (
-                    <>
-                      <button className="secondary" onClick={() => toggleActive(u)}>
-                        {u.is_active ? 'Deactivate' : 'Reactivate'}
-                      </button>
-                      {' '}
-                      <button className="secondary" onClick={() => handleDelete(u)}>Delete</button>
-                    </>
-                  )}
-                  {u.id === currentUser?.id && <span className="help-text">(you)</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          searchKeys={['name', 'email', 'role_key']}
+          columns={[
+            { key: 'name', label: 'Name', sortable: true },
+            { key: 'email', label: 'Email', sortable: true },
+            { key: 'phone', label: 'Phone', render: (u) => u.phone || '-' },
+            { key: 'role_key', label: 'Role', sortable: true },
+            { key: 'scope', label: 'Scope', render: (u) => u.scope_district_id || u.scope_state_id || '-' },
+            {
+              key: 'home_district_ids',
+              label: 'Home Districts (Auto-Assign)',
+              render: (u) => (u.role_key !== 'surveyor' ? <span className="help-text">n/a</span> : (
+                <div>
+                  <div className="chip-select" style={{ marginBottom: 6 }}>
+                    {(u.home_district_ids || []).length === 0 && <span className="help-text">none set</span>}
+                    {(u.home_district_ids || []).map((d) => (
+                      <span className="chip selected" key={d}>
+                        {d}
+                        <button type="button" onClick={() => removeHomeDistrict(u, d)} title="Remove">×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex-row" style={{ gap: 6 }}>
+                    <input
+                      style={{ width: 110 }}
+                      placeholder="District ID"
+                      value={districtDraft[u.id] || ''}
+                      onChange={(e) => setDistrictDraft({ ...districtDraft, [u.id]: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addHomeDistrict(u); } }}
+                    />
+                    <button type="button" className="secondary" onClick={() => addHomeDistrict(u)}>Add</button>
+                  </div>
+                </div>
+              )),
+            },
+            { key: 'is_active', label: 'Status', render: (u) => <StatusBadge status={u.is_active ? 'active' : 'deactivated'} /> },
+            {
+              key: 'actions',
+              label: '',
+              render: (u) => (u.id !== currentUser?.id ? (
+                <>
+                  <button className="secondary" onClick={() => toggleActive(u)}>
+                    {u.is_active ? 'Deactivate' : 'Reactivate'}
+                  </button>
+                  {' '}
+                  <button className="secondary" onClick={() => handleDelete(u)}>Delete</button>
+                </>
+              ) : <span className="help-text">(you)</span>),
+            },
+          ]}
+          rows={users}
+          emptyMessage="No users yet."
+        />
       </div>
     </div>
   );

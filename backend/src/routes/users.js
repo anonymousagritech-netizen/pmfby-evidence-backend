@@ -36,7 +36,7 @@ router.get('/', requireRole(ROLES.SUPER_ADMIN, ROLES.MANAGER), async (req, res, 
   try {
     const { rows } = await pool.query(
       `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.scope_state_id, u.scope_district_id,
-              r.key AS role_key
+              u.home_district_ids, r.key AS role_key
        FROM users u JOIN roles r ON r.id = u.role_id
        WHERE u.deleted_at IS NULL ORDER BY u.created_at DESC`
     );
@@ -53,9 +53,12 @@ router.get('/', requireRole(ROLES.SUPER_ADMIN, ROLES.MANAGER), async (req, res, 
 // lock every Super Admin out of the system with no one left to undo it).
 router.patch('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
   try {
-    const { name, phone, scopeStateId, scopeDistrictId, isActive } = req.body;
+    const { name, phone, scopeStateId, scopeDistrictId, isActive, homeDistrictIds } = req.body;
     if (typeof isActive === 'boolean' && !isActive && req.params.id === req.user.id) {
       return res.status(400).json({ error: 'You cannot deactivate your own account' });
+    }
+    if (homeDistrictIds !== undefined && !Array.isArray(homeDistrictIds)) {
+      return res.status(400).json({ error: 'homeDistrictIds must be an array of district id strings' });
     }
 
     const { rows } = await pool.query(
@@ -65,16 +68,17 @@ router.patch('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
          scope_state_id = COALESCE($4, scope_state_id),
          scope_district_id = COALESCE($5, scope_district_id),
          is_active = COALESCE($6, is_active),
+         home_district_ids = COALESCE($7, home_district_ids),
          updated_at = now()
        WHERE id = $1 AND deleted_at IS NULL
-       RETURNING id, name, email, phone, is_active, scope_state_id, scope_district_id`,
+       RETURNING id, name, email, phone, is_active, scope_state_id, scope_district_id, home_district_ids`,
       [req.params.id, name || null, phone || null, scopeStateId || null, scopeDistrictId || null,
-        typeof isActive === 'boolean' ? isActive : null]
+        typeof isActive === 'boolean' ? isActive : null, homeDistrictIds || null]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
     await recordAudit(null, {
       userId: req.user.id, action: typeof isActive === 'boolean' ? (isActive ? 'reactivate_user' : 'deactivate_user') : 'update_user',
-      resourceType: 'users', resourceId: req.params.id, metadata: { name, phone, scopeStateId, scopeDistrictId, isActive },
+      resourceType: 'users', resourceId: req.params.id, metadata: { name, phone, scopeStateId, scopeDistrictId, isActive, homeDistrictIds },
     });
     res.json({ user: rows[0] });
   } catch (err) {

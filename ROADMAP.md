@@ -125,19 +125,29 @@ re-running the ~5 minute extraction for 29 rows.
 **Scoping decision:** the resulting NDJSON is 150MB — well over the "ideally under
 ~50MB" git-friendliness target from the brief. It is kept on disk only
 (`.gitignore`'d) rather than committed; only the small `village_centroids_summary.json`
-sanity-check file is tracked. Consequences: (a) this file must be regenerated or
-manually copied onto any other machine/deploy target that needs it — it is NOT part of
-`git clone`; (b) the backend's `villageLookupService.js` loads it lazily on first use
-and degrades to empty results (no crash) if the file isn't present, which matters for
-Render specifically — **the 150MB file has not been uploaded to the live Render
-instance**, so in production today the villages/lookup and villages/nearby endpoints,
-and the auto-assign cross-district fallback sourcing, will return empty/no-op results
-until that file is provisioned there (e.g. via a persistent disk + one-time upload, or a
-cheaper derived subset). Loading the full 653k-row file into a Node process's memory
-(a few hundred MB once parsed into JS objects) is also something to watch on Render's
-free tier's RAM ceiling if it's enabled there.
+sanity-check file is tracked. The backend's `villageLookupService.js` loads it lazily on
+first use and degrades to empty results (no crash) if the file isn't present.
 
-### Village-based auto-assignment — backend done and tested; admin-web scoped down
+**Getting the file onto Render (resolved — option (c)):** `POST
+/api/village-data/upload` (Super Admin only, audited as `upload_village_centroids`,
+`backend/src/routes/villageData.js`) streams a multipart file straight to disk via
+`multer.diskStorage` (never buffered fully in memory — matters at 150MB on a free-tier
+instance), sanity-checks the first NDJSON line looks like a village record, then
+atomically renames it over the live file and calls
+`villageLookupService.resetCache()` so the next lookup picks it up without a restart.
+`GET /api/village-data/status` reports whether a file is currently loaded and its size.
+admin-web's Auto-Assign page has a small upload card for this. Chosen over the two
+alternatives raised: (a) a Render persistent Disk needs a paid instance type — not
+confirmed to be in play here; (b) routing through the existing evidence-file storage
+abstraction would mean transparently AES-256-GCM-encrypting and decrypting 150MB of
+public geographic reference data on every read, for no real benefit. The tradeoff with
+(c): the file lives only on that Render instance's ephemeral disk, so **it must be
+re-uploaded after every deploy that provisions a fresh instance/disk** (Render's free
+web services don't guarantee disk persistence across deploys) — this is a manual step,
+not automatic. If this becomes painful in practice, revisit with a real object-storage
+backend (S3/MinIO, or a Render persistent Disk once/if the plan supports it).
+
+### Village-based auto-assignment — backend done and tested; admin-web built out
 Implemented per spec: `backend/src/services/autoAssignService.js` (pure, unit-tested
 balancing/priority/ordering/fallback functions — 11 unit tests) +
 `backend/src/services/villageLookupService.js` (exact/fuzzy name matching via
@@ -145,40 +155,70 @@ Levenshtein similarity, haversine nearest-neighbor) + `backend/src/routes/autoAs
 (`POST /api/auto-assign/preview`, `POST /api/auto-assign/commit`, `GET
 /api/auto-assign/runs`, `GET /api/auto-assign/villages/lookup`, `GET
 /api/auto-assign/villages/nearby` — all Super Admin only except the two read-only
-village lookups which Manager can also use; 5 integration tests cover RBAC + the
+village lookups which Manager can also use; integration tests cover RBAC + the
 preview-doesn't-write / commit-does-write distinction). Migration
 `1700000009000_auto_assign.js` adds `users.home_district_ids` (text[], which districts a
 surveyor is eligible for), `farmer_assignments.manual_override` (so the algorithm never
 redistributes a manually-placed case), and `assignment_runs` (audit trail of every
 preview/commit with full params + per-surveyor summary).
 
-**What's deferred, and why:** the brief's admin-web ask for this feature was large
-(district/surveyor home-district management UI, a sortable/filterable live case table,
-and a Leaflet/OpenStreetMap map with per-surveyor-colored village markers) on top of a
-separate, equally large "full visual redesign of admin-web" ask (design system, data-grid
-tables app-wide, dashboard charts). Given the time budget for this pass, a working
-`AutoAssignPage.jsx` was built (district/report-date/TAT/cutoffs form, Preview, a
-per-surveyor breakdown table, Commit) that exercises the real API end-to-end, but:
-- **No Leaflet map view yet.** Reasonable engineering call: wiring it up meaningfully
-  needs the villages'-own lat/lon surfaced per assigned case from the backend (an easy
-  follow-up — `autoAssign.js` would need to join village centroids into the
-  preview/commit response) and, per the note above, the centroid file isn't even on
-  Render yet — a map with no backing data would be misleading to ship. Next step: add
-  `lat`/`lon` to each placement in the preview response, then render with
-  `react-leaflet` + OSM tiles, clustering markers (hundreds of thousands of raw points
-  would not render acceptably — cluster by village, color by surveyor).
-- **No surveyor home-district management UI.** `home_district_ids` can be set today via
-  direct SQL/`PATCH /api/users/:id` (if that route accepts arbitrary columns — otherwise
-  a one-line addition to `routes/users.js`) but there's no admin-web form for it yet.
-- **No app-wide visual redesign.** This is a genuinely separate, large effort (new CSS
-  design system/tokens, converting every list page to a real sortable/filterable
-  paginated data-grid, dashboard charts) and doing it well in the time left for this pass
-  would have meant shipping it rushed/half-done across many files rather than shipping
-  the auto-assign backend correctly and completely. Deliberately left for a dedicated
-  follow-up pass rather than attempted here.
-- **No server-side fuzzy-match auto-correction wired into the Excel import flow.**
-  `villageLookupService.findVillage()` exists and is usable (and is exposed via the
-  lookup API) but `importRoutes.js`/`columnMapping.js` were not modified to call it
-  automatically during import preview — doing so safely (deciding when to
-  auto-accept vs. flag for manual review) deserves its own pass with its own tests
-  rather than a quick unreviewed wire-up.
+**admin-web, follow-up round — all four previously-deferred items now built:**
+- **Leaflet map view** (`AutoAssignPage.jsx`, `react-leaflet` + free OSM tiles, no API
+  key). `autoAssign.js`'s preview/commit responses now include `villageMarkers`: only
+  the villages actually touched by that run (never all 653k), each with its assigned
+  surveyor and a lat/lon from `villageLookupService`, colored per-surveyor on the map.
+  Deliberately not clustered — the per-run set is small by construction (one village =
+  one surveyor, one district-scoped run), so plotting it directly is the right call, not
+  a shortcut.
+  **Known limitation:** `survey_cases.district_id` is a source-system ID, not the
+  district *name* the centroid lookup matches against (`district_h`); there's no
+  ID→name mapping table yet, so village-name matching for markers is done without a
+  district filter. This is best-effort and can occasionally pick the wrong same-named
+  village in a different state. Fixing this properly needs a small `districts`
+  reference table (ID → canonical name) — not built this pass; flagged here rather than
+  silently shipped as if it were exact.
+- **Surveyor home-district management UI**: `UsersPage.jsx` now has an inline
+  chip-editor per surveyor row (add/remove district IDs into `home_district_ids` via
+  `PATCH /api/users/:id`, which now accepts `homeDistrictIds`). Without this the
+  auto-assign feature had no surveyors to assign to from the UI — now it does.
+- **Village centroid file upload**: see the "Getting the file onto Render" note above.
+- **Import-time fuzzy auto-correction**: `importService.applyVillageAutoCorrection()`
+  runs on every imported row's `Level7_Name`/`District_Name` during commit. Exact
+  matches pass through untouched; fuzzy matches ≥0.92 similarity are silently
+  normalized to the canonical village spelling (recorded in that row's `rowLog` entry as
+  `villageNote: {type: 'auto_corrected_village', from, to, confidence}`); matches in the
+  0.82–0.92 band are left as-imported but flagged (`villageNote: {type:
+  'village_needs_review', ...}`) for admin review rather than auto-changed, since an
+  ambiguous auto-correction risks silently moving a case to the wrong village — this
+  mirrors the exact/fuzzy-confidence tiering `columnMapping.js` already uses for Excel
+  headers. If the centroid dataset isn't loaded, this degrades silently (never blocks or
+  fails an import) — 6 unit tests cover all branches with a mocked lookup.
+  **Not yet done:** admin-web's Import page doesn't surface `villageNote` entries from
+  the row log in its UI yet (the data is there in `commitImport`'s response/row_log,
+  just not rendered) — worth a small follow-up so "needs review" rows are actually
+  visible to the admin instead of only living in the raw audit/import_batches data.
+
+### Visual redesign — done (admin-web)
+Replaced the flat navy/gray-on-white styling (`admin-web/src/index.css`) with a real
+design system: navy kept as the brand/primary color, plus teal/violet/amber accents and
+a dedicated red/amber/green P1/P2/P3 + status-badge palette (`--p1-*`/`--p2-*`/`--p3-*`
+tokens), card shadows/depth (`--shadow-sm`/`--shadow-md`), and consistent spacing/type.
+- **Dashboard** (`DashboardPage.jsx`): real stat cards (total cases, completed, pending,
+  pending emergency reviews, pending discrepancy flags) and two dependency-free
+  horizontal bar charts (cases by status, open cases by priority), backed by a new
+  `GET /api/reports/dashboard-summary` endpoint (role-scoped the same way every other
+  list endpoint is: surveyor sees their own assigned cases, manager their state/district,
+  super_admin org-wide).
+- **Data-grid tables**: a small reusable `DataTable` component (`components/DataTable.jsx`
+  — no external table library, to keep the Render free static-tier bundle small;
+  gzipped JS is ~129KB after adding Leaflet) with sortable columns, a search box, and
+  pagination. Applied to Farmers &amp; Cases, Evidence Monitoring, ZIP Archives, Audit
+  Logs, Users, and the Auto-Assign preview table. Farmers and Audit Logs now use **real
+  server-side pagination** (`page`/`pageSize`/`total` query params added to
+  `routes/farmers.js` and `routes/auditLogs.js`) rather than loading a capped list
+  client-side; Evidence/ZIP Archives/Users still fetch a server-capped list (200-500
+  rows, unchanged from before) and paginate/sort/search that capped set client-side —
+  reasonable for current data volumes, but the same real-pagination treatment should be
+  extended to them if those lists grow large in practice.
+- Status/priority badges (`components/StatusBadge.jsx`) now use the shared red/amber/
+  green token scheme everywhere instead of ad hoc inline classes.

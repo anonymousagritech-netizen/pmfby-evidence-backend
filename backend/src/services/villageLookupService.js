@@ -137,4 +137,12 @@ async function isLoaded() {
   return villages.length > 0;
 }
 
-module.exports = { load, findVillage, findNearby, haversineKm, similarity, isLoaded, NDJSON_PATH };
+// Drops the in-memory cache so the next lookup re-reads the file from disk — used after
+// an admin uploads a replacement NDJSON (see routes/villageData.js).
+function resetCache() {
+  villages = null;
+  byDistrict = null;
+  loadPromise = null;
+}
+
+module.exports = { load, findVillage, findNearby, haversineKm, similarity, isLoaded, resetCache, NDJSON_PATH };

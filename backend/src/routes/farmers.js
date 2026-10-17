@@ -13,6 +13,8 @@ router.use(authenticate);
 router.get('/', async (req, res, next) => {
   try {
     const { search } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize, 10) || 50));
     const params = [];
     let where = 'fr.deleted_at IS NULL';
 
@@ -37,14 +39,19 @@ router.get('/', async (req, res, next) => {
       where += ` AND (fr.farmer_name ILIKE $${params.length} OR fr.village_name ILIKE $${params.length})`;
     }
 
+    const { rows: countRows } = await pool.query(
+      `SELECT count(*)::int AS total FROM farmer_records fr WHERE ${where}`, params
+    );
+    const offsetParams = [...params, pageSize, (page - 1) * pageSize];
     const { rows } = await pool.query(
       `SELECT fr.*, fa.user_id AS assigned_user_id
        FROM farmer_records fr
        LEFT JOIN farmer_assignments fa ON fa.farmer_id = fr.id AND fa.active = true
-       WHERE ${where} ORDER BY fr.created_at DESC LIMIT 500`,
-      params
+       WHERE ${where} ORDER BY fr.created_at DESC
+       LIMIT $${offsetParams.length - 1} OFFSET $${offsetParams.length}`,
+      offsetParams
     );
-    res.json({ farmers: rows });
+    res.json({ farmers: rows, page, pageSize, total: countRows[0]?.total || 0 });
   } catch (err) {
     next(err);
   }

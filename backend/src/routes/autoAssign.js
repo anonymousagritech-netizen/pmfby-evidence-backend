@@ -66,7 +66,34 @@ async function computeRun(req) {
     cases, surveyorsByDistrict, reportDate, tatDays, minCases, p1CutoffDays, p2CutoffDays,
   });
   const params = { districtIds, reportDate, tatDays, minCases, p1CutoffDays, p2CutoffDays };
-  return { result, params };
+  return { result, params, cases };
+}
+
+// Builds a small list of {villageName, districtId, surveyorId, caseCount, lat, lon} for
+// only the villages actually touched by this run (never all 653k villages — the map on
+// the admin-web side renders this list directly, no clustering needed at this size).
+async function buildVillageMarkers(cases, placements) {
+  const byVillage = new Map(); // `${districtId}|${villageId||villageName}` -> {villageName, districtId, surveyorId, caseCount}
+  for (const c of cases) {
+    const surveyorId = placements.get(c.id);
+    if (!surveyorId) continue;
+    const key = `${c.districtId}|${c.villageId || c.villageName}`;
+    if (!byVillage.has(key)) {
+      byVillage.set(key, { villageName: c.villageName, districtId: c.districtId, surveyorId, caseCount: 0 });
+    }
+    byVillage.get(key).caseCount += 1;
+  }
+  // Note: survey_cases.district_id is a source-system ID, not the district NAME the
+  // centroid lookup matches against (district_h) — we don't yet have an ID->name
+  // mapping table, so district is intentionally omitted here and matching is by
+  // village name alone (best-effort; can occasionally match the wrong same-named
+  // village in another state). See ROADMAP.md.
+  const markers = [];
+  for (const v of byVillage.values()) {
+    const found = await villageLookup.findVillage(v.villageName);
+    if (found.match) markers.push({ ...v, lat: found.match.lat, lon: found.match.lon });
+  }
+  return markers;
 }
 
 // Dry run: compute the assignment, persist it as a 'preview' run for traceability, but
@@ -75,7 +102,7 @@ router.post('/preview', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =
   try {
     const err = validateParams(req.body);
     if (err) return res.status(400).json({ error: err });
-    const { result, params } = await computeRun(req);
+    const { result, params, cases } = await computeRun(req);
     const summary = {
       totalCases: result.totalCases,
       totalAssigned: result.totalAssigned,
@@ -90,7 +117,8 @@ router.post('/preview', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =
     await recordAudit(null, {
       userId: req.user.id, action: 'auto_assign_preview', resourceType: 'assignment_runs', resourceId: rows[0].id, metadata: params,
     });
-    res.json({ runId: rows[0].id, createdAt: rows[0].created_at, ...summary, unassignedCaseIds: result.unassignedCaseIds });
+    const villageMarkers = await buildVillageMarkers(cases, result.placements);
+    res.json({ runId: rows[0].id, createdAt: rows[0].created_at, ...summary, unassignedCaseIds: result.unassignedCaseIds, villageMarkers });
   } catch (e) { next(e); }
 });
 
@@ -100,7 +128,8 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
   try {
     const err = validateParams(req.body);
     if (err) return res.status(400).json({ error: err });
-    const { result, params } = await computeRun(req);
+    const { result, params, cases } = await computeRun(req);
+    const villageMarkers = await buildVillageMarkers(cases, result.placements);
 
     const response = await withTransaction(async (client) => {
       // placements: Map<caseId, surveyorId> keyed by survey_case id; resolve to farmer_id.
@@ -141,7 +170,7 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
       });
       return { runId: rows[0].id, createdAt: rows[0].created_at, ...summary };
     });
-    res.json(response);
+    res.json({ ...response, villageMarkers });
   } catch (e) { next(e); }
 });
 

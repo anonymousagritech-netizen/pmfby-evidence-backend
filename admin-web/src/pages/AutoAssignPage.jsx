@@ -1,10 +1,72 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 import { api } from '../api/client';
+import DataTable from '../components/DataTable';
+
+// A fixed, readable palette cycled across surveyors (not priority/status colors, which
+// are reserved for badges elsewhere) — distinct enough at a glance for a few dozen
+// surveyors in one district run.
+const SURVEYOR_COLORS = ['#0f2a4a', '#0d9488', '#b45309', '#6d28d9', '#b42318', '#1d4ed8', '#be185d', '#15803d'];
+function colorForSurveyor(id, index) {
+  return SURVEYOR_COLORS[index % SURVEYOR_COLORS.length];
+}
 
 // Village-based auto-assignment: admin sets params for a district (or comma-separated
-// list of districts), runs a dry-run Preview to see the per-surveyor breakdown, then
-// Commit to actually write farmer_assignments. See ROADMAP.md for what's intentionally
-// NOT built here yet (map view, full visual redesign) and why.
+// list of districts), runs a dry-run Preview to see the per-surveyor breakdown and map,
+// then Commit to actually write farmer_assignments. See ROADMAP.md for what's
+// intentionally scoped down here and why (district-ID-vs-name village matching, etc.)
+function VillageDataUploadCard() {
+  const [status, setStatus] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  async function loadStatus() {
+    try {
+      const res = await api.get('/village-data/status');
+      setStatus(res.data);
+    } catch (e) { /* non-fatal */ }
+  }
+  useEffect(() => { loadStatus(); }, []);
+
+  async function handleUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setMessage(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api.post('/village-data/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setMessage(`Uploaded (${Math.round(res.data.sizeBytes / 1024 / 1024)} MB). Village lookups now use this file.`);
+      await loadStatus();
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Upload failed');
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <div className="card">
+      <h3>Village Centroid Data</h3>
+      <p className="help-text">
+        The ~150MB village centroid file isn't in git (see ROADMAP.md) — upload it here
+        once per backend deploy so map/fuzzy-match features have data to work with.
+      </p>
+      {status && (
+        <p className="help-text">
+          Currently loaded: {status.loaded ? 'yes' : 'no'}
+          {status.sizeBytes ? ` (${Math.round(status.sizeBytes / 1024 / 1024)} MB on disk)` : ''}
+        </p>
+      )}
+      <input type="file" accept=".ndjson,.json,.txt" onChange={handleUpload} disabled={uploading} />
+      {message && <div className="help-text" style={{ marginTop: 6 }}>{message}</div>}
+    </div>
+  );
+}
+
 export default function AutoAssignPage() {
   const [districtIds, setDistrictIds] = useState('');
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
@@ -40,11 +102,18 @@ export default function AutoAssignPage() {
     }
   }
 
+  const surveyorIds = result?.perSurveyor?.map((s) => s.surveyorId) || [];
+  const colorFor = (surveyorId) => colorForSurveyor(surveyorId, surveyorIds.indexOf(surveyorId));
+  const markers = result?.villageMarkers || [];
+  const mapCenter = markers.length
+    ? [markers.reduce((s, m) => s + m.lat, 0) / markers.length, markers.reduce((s, m) => s + m.lon, 0) / markers.length]
+    : [22.9, 79.0]; // center of India fallback
+
   return (
     <div>
       <div className="card">
         <h2>Auto-Assign (village-based)</h2>
-        <p style={{ color: 'var(--muted, #666)' }}>
+        <p className="help-text">
           One village is always given whole to a single surveyor. Preview is a dry run —
           nothing is written until you Commit.
         </p>
@@ -69,7 +138,7 @@ export default function AutoAssignPage() {
           </label>
         </div>
         <div className="flex-row" style={{ marginTop: 12 }}>
-          <button type="button" disabled={loading} onClick={() => run('preview')}>Preview</button>
+          <button type="button" className="secondary" disabled={loading} onClick={() => run('preview')}>Preview</button>
           <button type="button" className="primary" disabled={loading || !result || result.mode !== 'preview'}
             onClick={() => run('commit')}>
             Commit Assignment
@@ -78,40 +147,95 @@ export default function AutoAssignPage() {
         {error && <div className="error-text">{error}</div>}
       </div>
 
+      <VillageDataUploadCard />
+
       {result && (
-        <div className="card">
-          <h3>{result.mode === 'commit' ? 'Committed' : 'Preview'} result</h3>
-          <p>
-            Total cases: {result.totalCases} — Assigned: {result.totalAssigned} — Unassigned: {result.totalUnassigned}
-          </p>
-          {result.underMinimumSurveyors?.length > 0 && (
-            <div className="error-text">
-              Under minimum caseload: {result.underMinimumSurveyors.length} surveyor(s)
+        <>
+          <div className="stat-grid">
+            <div className="stat-card" style={{ '--accent': 'var(--navy)' }}>
+              <span className="stat-label">Total Cases</span>
+              <span className="stat-value">{result.totalCases}</span>
             </div>
-          )}
-          <table>
-            <thead>
-              <tr>
-                <th>Surveyor</th><th>Districts</th><th>Villages</th><th>Total</th>
-                <th>P1</th><th>P2</th><th>P3</th><th>Under min?</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.perSurveyor?.map((s) => (
-                <tr key={s.surveyorId}>
-                  <td>{s.surveyorId}</td>
-                  <td>{s.districtCount}</td>
-                  <td>{s.villageCount}</td>
-                  <td>{s.totalCases}</td>
-                  <td>{s.p1}</td>
-                  <td>{s.p2}</td>
-                  <td>{s.p3}</td>
-                  <td>{s.underMinimum ? 'Yes' : ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            <div className="stat-card" style={{ '--accent': 'var(--p3-dot)' }}>
+              <span className="stat-label">Assigned</span>
+              <span className="stat-value">{result.totalAssigned}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--p1-dot)' }}>
+              <span className="stat-label">Unassigned</span>
+              <span className="stat-value">{result.totalUnassigned}</span>
+            </div>
+            <div className="stat-card" style={{ '--accent': 'var(--amber)' }}>
+              <span className="stat-label">Under Min Caseload</span>
+              <span className="stat-value">{result.underMinimumSurveyors?.length || 0}</span>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>{result.mode === 'commit' ? 'Committed' : 'Preview'}: per-surveyor breakdown</h3>
+            <DataTable
+              searchKeys={['surveyorId']}
+              columns={[
+                { key: 'surveyorId', label: 'Surveyor', sortable: true, render: (s) => (
+                  <span><span className="legend-dot" style={{ background: colorFor(s.surveyorId) }} />{s.surveyorId}</span>
+                ) },
+                { key: 'districtCount', label: 'Districts', sortable: true },
+                { key: 'villageCount', label: 'Villages', sortable: true },
+                { key: 'totalCases', label: 'Total', sortable: true },
+                { key: 'p1', label: 'P1', sortable: true, render: (s) => <span className="badge priority-p1">{s.p1}</span> },
+                { key: 'p2', label: 'P2', sortable: true, render: (s) => <span className="badge priority-p2">{s.p2}</span> },
+                { key: 'p3', label: 'P3', sortable: true, render: (s) => <span className="badge priority-p3">{s.p3}</span> },
+                { key: 'underMinimum', label: 'Under min?', render: (s) => (s.underMinimum ? <span className="badge denied">Yes</span> : '') },
+              ]}
+              rows={result.perSurveyor || []}
+              emptyMessage="No surveyors matched."
+            />
+          </div>
+
+          <div className="card">
+            <h3>Geographic spread</h3>
+            <p className="help-text">
+              Only the villages touched by this run are plotted ({markers.length} village{markers.length === 1 ? '' : 's'}) —
+              colored by assigned surveyor.
+            </p>
+            {markers.length === 0 ? (
+              <p className="help-text">
+                No village centroids matched for this run (either no cases were assigned,
+                or the village centroid dataset isn't loaded on this backend — see
+                ROADMAP.md).
+              </p>
+            ) : (
+              <>
+                <div style={{ height: 420, borderRadius: 8, overflow: 'hidden' }}>
+                  <MapContainer center={mapCenter} zoom={7} style={{ height: '100%', width: '100%' }}>
+                    <TileLayer
+                      attribution='&copy; OpenStreetMap contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    {markers.map((m, i) => (
+                      <CircleMarker
+                        key={i}
+                        center={[m.lat, m.lon]}
+                        radius={6 + Math.min(10, Math.log2(m.caseCount + 1) * 2)}
+                        pathOptions={{ color: colorFor(m.surveyorId), fillColor: colorFor(m.surveyorId), fillOpacity: 0.7 }}
+                      >
+                        <Popup>
+                          <strong>{m.villageName}</strong><br />
+                          Surveyor: {m.surveyorId}<br />
+                          Cases: {m.caseCount}
+                        </Popup>
+                      </CircleMarker>
+                    ))}
+                  </MapContainer>
+                </div>
+                <div className="map-legend">
+                  {surveyorIds.map((id) => (
+                    <span key={id}><span className="legend-dot" style={{ background: colorFor(id) }} />{id}</span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

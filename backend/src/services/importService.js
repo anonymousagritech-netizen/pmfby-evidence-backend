@@ -3,6 +3,44 @@ const { pool, withTransaction } = require('../db/pool');
 const { proposeColumnMapping } = require('./columnMapping');
 const { buildDedupeKey } = require('./farmerDedupe');
 const importSessionStore = require('./importSessionStore');
+const villageLookup = require('./villageLookupService');
+
+// Village/district name auto-correction against the extracted village centroid
+// dataset (see villageLookupService) — same spirit as the exact/fuzzy-confidence
+// column-mapping pattern already used for Excel headers, applied here to data values.
+// High-confidence fuzzy matches (likely typo/OCR variants) are silently normalized to
+// the canonical spelling; mid-confidence matches are left as-imported but flagged in
+// the row log for admin review, since auto-correcting an ambiguous match risks silently
+// moving a case to the wrong village.
+const AUTO_CORRECT_THRESHOLD = 0.92;
+const FLAG_FOR_REVIEW_THRESHOLD = 0.82; // villageLookupService's own default fuzzy floor
+
+async function applyVillageAutoCorrection(fields) {
+  if (!fields.Level7_Name) return { fields, note: null };
+  let found;
+  try {
+    found = await villageLookup.findVillage(fields.Level7_Name, fields.District_Name);
+  } catch (e) {
+    return { fields, note: null }; // lookup dataset not loaded — degrade silently, never block import
+  }
+  if (!found.match) return { fields, note: null };
+  if (found.method === 'exact') return { fields, note: null };
+
+  if (found.confidence >= AUTO_CORRECT_THRESHOLD) {
+    const corrected = { ...fields };
+    const original = fields.Level7_Name;
+    corrected.Level7_Name = found.match.village;
+    if (found.match.district_h && fields.District_Name && found.match.district_h.toLowerCase() !== String(fields.District_Name).toLowerCase()) {
+      // Only correct district spelling, never silently move a case to a different
+      // actual district — that's a bigger discrepancy than a spelling fix.
+    }
+    return { fields: corrected, note: { type: 'auto_corrected_village', from: original, to: found.match.village, confidence: found.confidence } };
+  }
+  if (found.confidence >= FLAG_FOR_REVIEW_THRESHOLD) {
+    return { fields, note: { type: 'village_needs_review', value: fields.Level7_Name, suggestion: found.match.village, confidence: found.confidence } };
+  }
+  return { fields, note: null };
+}
 
 // Columns that must always be treated as strings (preserve leading zeros / original
 // source IDs — never coerced through Number()).
@@ -201,18 +239,20 @@ async function commitImport({ sessionId, confirmedMapping, uploadedBy }) {
   await withTransaction(async (client) => {
     for (const row of session.rows) {
       try {
-        const fields = mapRowToFields(row.values, confirmedMapping, session.headers);
+        let fields = mapRowToFields(row.values, confirmedMapping, session.headers);
         const errors = validateFields(fields);
         if (errors.length > 0) {
           summary.errored += 1;
           rowLog.push({ row: row.rowNumber, status: 'error', error: errors.join('; ') });
           continue;
         }
+        const { fields: correctedFields, note: villageNote } = await applyVillageAutoCorrection(fields);
+        fields = correctedFields;
         const farmerId = await findOrCreateFarmer(client, fields);
         const result = await upsertCase(client, farmerId, fields, `row:${row.rowNumber}`);
         summary[result.status === 'inserted' ? 'inserted'
           : result.status === 'updated' ? 'updated' : 'unchanged'] += 1;
-        rowLog.push({ row: row.rowNumber, status: result.status, changedFields: result.changedFields });
+        rowLog.push({ row: row.rowNumber, status: result.status, changedFields: result.changedFields, villageNote });
       } catch (err) {
         summary.errored += 1;
         rowLog.push({ row: row.rowNumber, status: 'error', error: err.message });
@@ -239,4 +279,5 @@ module.exports = {
   parseWorkbookBuffer,
   createImportPreview,
   commitImport,
+  applyVillageAutoCorrection,
 };
