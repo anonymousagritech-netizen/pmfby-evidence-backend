@@ -5,6 +5,7 @@ const { requireRole, ROLES } = require('../middleware/rbac');
 const { recordAudit } = require('../services/auditLog');
 const { runAutoAssignPure } = require('../services/autoAssignService');
 const villageLookup = require('../services/villageLookupService');
+const boundaryLookup = require('../services/boundaryLookupService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -96,6 +97,32 @@ async function buildVillageMarkers(cases, placements) {
   return markers;
 }
 
+// Same village set as buildVillageMarkers, but returns full simplified polygon
+// geometry instead of a single centroid point — only for the villages in this run, per
+// the brief ("don't make a user's browser download all-India boundaries to see one
+// district's auto-assign run"). Mirrors the same village-name-only matching caveat.
+async function buildVillagePolygons(cases, placements) {
+  const byVillage = new Map();
+  for (const c of cases) {
+    const surveyorId = placements.get(c.id);
+    if (!surveyorId) continue;
+    const key = `${c.districtId}|${c.villageId || c.villageName}`;
+    if (!byVillage.has(key)) {
+      byVillage.set(key, { villageName: c.villageName, districtId: c.districtId, surveyorId, caseCount: 0 });
+    }
+    byVillage.get(key).caseCount += 1;
+  }
+  const refs = [...byVillage.values()];
+  const boundaryRecs = await boundaryLookup.getByVillageRefs(refs.map((v) => ({ village: v.villageName })));
+  const byName = new Map(boundaryRecs.map((r) => [r.village, r]));
+  const polygons = [];
+  for (const v of refs) {
+    const rec = byName.get(v.villageName);
+    if (rec) polygons.push({ ...v, geometry: rec.geometry });
+  }
+  return polygons;
+}
+
 // Dry run: compute the assignment, persist it as a 'preview' run for traceability, but
 // write nothing to farmer_assignments.
 router.post('/preview', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
@@ -118,7 +145,8 @@ router.post('/preview', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =
       userId: req.user.id, action: 'auto_assign_preview', resourceType: 'assignment_runs', resourceId: rows[0].id, metadata: params,
     });
     const villageMarkers = await buildVillageMarkers(cases, result.placements);
-    res.json({ runId: rows[0].id, createdAt: rows[0].created_at, ...summary, unassignedCaseIds: result.unassignedCaseIds, villageMarkers });
+    const villagePolygons = await buildVillagePolygons(cases, result.placements);
+    res.json({ runId: rows[0].id, createdAt: rows[0].created_at, ...summary, unassignedCaseIds: result.unassignedCaseIds, villageMarkers, villagePolygons });
   } catch (e) { next(e); }
 });
 
@@ -130,6 +158,7 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
     if (err) return res.status(400).json({ error: err });
     const { result, params, cases } = await computeRun(req);
     const villageMarkers = await buildVillageMarkers(cases, result.placements);
+    const villagePolygons = await buildVillagePolygons(cases, result.placements);
 
     const response = await withTransaction(async (client) => {
       // placements: Map<caseId, surveyorId> keyed by survey_case id; resolve to farmer_id.
@@ -170,7 +199,7 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
       });
       return { runId: rows[0].id, createdAt: rows[0].created_at, ...summary };
     });
-    res.json({ ...response, villageMarkers });
+    res.json({ ...response, villageMarkers, villagePolygons });
   } catch (e) { next(e); }
 });
 

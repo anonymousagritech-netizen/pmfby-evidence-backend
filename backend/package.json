@@ -16,6 +16,8 @@
     "test:integration": "jest --runInBand --forceExit tests/integration"
   },
   "dependencies": {
+    "@turf/helpers": "^7.4.0",
+    "@turf/simplify": "^7.4.0",
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

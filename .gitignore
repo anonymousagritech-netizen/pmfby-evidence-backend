@@ -17,3 +17,5 @@ Thumbs.db
 # backend/scripts/extract_village_centroids.js. The small summary JSON IS tracked.
 backend/data/village_centroids.ndjson
 backend/scripts/extract_log.txt
+backend/data/village_boundaries.ndjson
+backend/scripts/extract_boundaries_log.txt

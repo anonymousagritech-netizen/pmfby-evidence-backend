@@ -222,3 +222,69 @@ tokens), card shadows/depth (`--shadow-sm`/`--shadow-md`), and consistent spacin
   extended to them if those lists grow large in practice.
 - Status/priority badges (`components/StatusBadge.jsx`) now use the shared red/amber/
   green token scheme everywhere instead of ad hoc inline classes.
+
+### Village polygon boundaries (follow-up round)
+Full village outline polygons, not just centroid points, per direct follow-up request.
+`backend/scripts/extract_village_boundaries.js` streams the trimmed national boundary
+shapefile (`National_Boundary.{shp,dbf}` — same geometries/objectid order as
+`merged_villages`, confirmed on the first two records before running the full job, just
+8 lean attribute columns instead of ~90 census fields), reprojects every ring vertex
+with the exact same proj4 LCC definition already verified for the centroid extraction
+(re-verified here too: Chittoor, AP's first ring vertex reprojects to the same
+~13.11°N 79.19°E as its centroid), then simplifies each polygon with `@turf/simplify`
+(Douglas-Peucker) before writing one NDJSON record per village to
+`backend/data/village_boundaries.ndjson`.
+
+**Simplification tolerance — chosen after measuring, not guessed.** A 2000-record
+sample was extracted at two settings before committing to the full ~650k-village run:
+0.0005° tolerance + 5-decimal coordinate precision projected to ~387MB all-India;
+0.001° tolerance (~110m) + 4-decimal precision (~11m, plenty for a web outline)
+projected to ~190-210MB. Went with the second. **Actual full-run result: 653,616
+villages, 0 skipped, average vertex count per polygon cut from 51 to 11 (simplify +
+rounding), final file 257MB** — somewhat above the sample's projection (sample
+variance; a few states' villages have more complex/exclave-heavy shapes than the
+sample happened to catch) but still the right tradeoff: most of that size is an
+intrinsic floor (every polygon needs a minimum handful of vertices, times 650k+
+records' worth of JSON overhead) rather than something a larger tolerance would
+meaningfully shrink further — and it doesn't matter for git either way, since (like the
+centroid file) this one isn't committed there. Verified before committing to the full
+run: Chittoor, AP's `Cheruvu Mundara Khandriga` polygon (same village spot-checked for
+the centroid extraction) reprojects to the same ~13.11°N 79.19°E neighborhood and its
+ring closes correctly (5 points after simplification).
+
+**Storage/serving strategy:** `backend/src/services/boundaryLookupService.js` mirrors
+`villageLookupService.js`'s lazy-load pattern, but indexes by district AND by
+(district, village) so two request shapes stay cheap: "every boundary in district X"
+(`GET /api/boundaries/by-district`) and "exactly these villages" (`POST
+/api/boundaries/by-villages`, fed the village list straight off an auto-assign
+preview/commit response) — the latter is what the Auto-Assign map actually uses, so a
+browser never downloads more than the handful of villages in the current run, let alone
+all-India data. Both endpoints are Manager/Super-Admin gated.
+
+**Upload mechanism:** `POST /api/boundaries/upload` — identical pattern to
+`POST /api/village-data/upload` (Super Admin only, audited as
+`upload_village_boundaries`, multer disk-streamed, atomic rename, cache reset via
+`boundaryLookup.resetCache()`), exposed on the Auto-Assign page via the same
+`DataUploadCard` component the centroid upload now also uses (de-duplicated into one
+reusable component). **Same post-deploy requirement as the centroid file**: this data
+isn't in git, so it must be uploaded to each fresh Render instance/disk after deploy —
+documented once, applies to both files.
+
+**Map changes:** `autoAssign.js`'s preview/commit responses now also return
+`villagePolygons` (same village set as the existing `villageMarkers`, but with
+simplified polygon/multipolygon geometry instead of a single lat/lon) alongside the
+existing points. The Auto-Assign page map has a toggle — "Village outlines" (default)
+renders actual filled/outlined polygons via `react-leaflet`'s `Polygon`, "Points" keeps
+the original circle-marker view — both colored per assigned surveyor from the same
+palette. If no boundary file is loaded (or a specific village has no polygon match), the
+page falls back to telling the admin to try the Points view rather than showing a blank
+map.
+
+**Known limitation carried over:** the same `district_id`-vs-district-NAME mismatch
+noted for centroid markers applies here (`survey_cases.district_id` is a source-system
+ID; this dataset's `district` field is a name) — `boundaryLookupService.getByVillageRefs`
+tries a district-qualified lookup first, falls back to a village-name-only scan across
+all districts when that misses. The name-only fallback is a linear scan over the whole
+in-memory index, which is fine for the handful of villages in one auto-assign run but
+would not be an appropriate way to serve a whole-district bulk request — that path
+(`by-district`) looks up by name directly without the scan.

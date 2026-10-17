@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Polygon, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { api } from '../api/client';
 import DataTable from '../components/DataTable';
@@ -16,18 +16,18 @@ function colorForSurveyor(id, index) {
 // list of districts), runs a dry-run Preview to see the per-surveyor breakdown and map,
 // then Commit to actually write farmer_assignments. See ROADMAP.md for what's
 // intentionally scoped down here and why (district-ID-vs-name village matching, etc.)
-function VillageDataUploadCard() {
+function DataUploadCard({ title, description, statusEndpoint, uploadEndpoint }) {
   const [status, setStatus] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState(null);
 
   async function loadStatus() {
     try {
-      const res = await api.get('/village-data/status');
+      const res = await api.get(statusEndpoint);
       setStatus(res.data);
     } catch (e) { /* non-fatal */ }
   }
-  useEffect(() => { loadStatus(); }, []);
+  useEffect(() => { loadStatus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -37,8 +37,8 @@ function VillageDataUploadCard() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await api.post('/village-data/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setMessage(`Uploaded (${Math.round(res.data.sizeBytes / 1024 / 1024)} MB). Village lookups now use this file.`);
+      const res = await api.post(uploadEndpoint, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setMessage(`Uploaded (${Math.round(res.data.sizeBytes / 1024 / 1024)} MB).`);
       await loadStatus();
     } catch (err) {
       setMessage(err.response?.data?.error || 'Upload failed');
@@ -50,11 +50,8 @@ function VillageDataUploadCard() {
 
   return (
     <div className="card">
-      <h3>Village Centroid Data</h3>
-      <p className="help-text">
-        The ~150MB village centroid file isn't in git (see ROADMAP.md) — upload it here
-        once per backend deploy so map/fuzzy-match features have data to work with.
-      </p>
+      <h3>{title}</h3>
+      <p className="help-text">{description}</p>
       {status && (
         <p className="help-text">
           Currently loaded: {status.loaded ? 'yes' : 'no'}
@@ -77,6 +74,7 @@ export default function AutoAssignPage() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [mapView, setMapView] = useState('polygon'); // 'polygon' | 'point'
 
   function payload() {
     return {
@@ -105,9 +103,24 @@ export default function AutoAssignPage() {
   const surveyorIds = result?.perSurveyor?.map((s) => s.surveyorId) || [];
   const colorFor = (surveyorId) => colorForSurveyor(surveyorId, surveyorIds.indexOf(surveyorId));
   const markers = result?.villageMarkers || [];
+  const polygons = result?.villagePolygons || [];
+  const haveAnyGeo = markers.length > 0 || polygons.length > 0;
   const mapCenter = markers.length
     ? [markers.reduce((s, m) => s + m.lat, 0) / markers.length, markers.reduce((s, m) => s + m.lon, 0) / markers.length]
     : [22.9, 79.0]; // center of India fallback
+
+  // react-leaflet Polygon expects [lat, lon] pairs; our stored geometry is GeoJSON
+  // [lon, lat]. A MultiPolygon's outer array is one ring-set per part; Polygon's own
+  // positions prop accepts an array of rings directly (holes as subsequent rings),
+  // which is also how react-leaflet renders a MultiPolygon's multiple parts (array of
+  // ring-arrays) — same shape, so one conversion covers both.
+  function geometryToLeafletPositions(geometry) {
+    if (!geometry) return [];
+    const toLatLon = (ring) => ring.map(([lon, lat]) => [lat, lon]);
+    if (geometry.type === 'Polygon') return geometry.coordinates.map(toLatLon);
+    if (geometry.type === 'MultiPolygon') return geometry.coordinates.map((poly) => poly.map(toLatLon));
+    return [];
+  }
 
   return (
     <div>
@@ -147,7 +160,18 @@ export default function AutoAssignPage() {
         {error && <div className="error-text">{error}</div>}
       </div>
 
-      <VillageDataUploadCard />
+      <DataUploadCard
+        title="Village Centroid Data"
+        description="The ~150MB village centroid file isn't in git (see ROADMAP.md) — upload it here once per backend deploy so map/fuzzy-match features have data to work with."
+        statusEndpoint="/village-data/status"
+        uploadEndpoint="/village-data/upload"
+      />
+      <DataUploadCard
+        title="Village Boundary Polygon Data"
+        description="The ~200MB simplified village boundary polygon file isn't in git either (see ROADMAP.md) — upload it here once per backend deploy so the polygon map view below has shapes to draw."
+        statusEndpoint="/boundaries/status"
+        uploadEndpoint="/boundaries/upload"
+      />
 
       {result && (
         <>
@@ -192,16 +216,38 @@ export default function AutoAssignPage() {
           </div>
 
           <div className="card">
-            <h3>Geographic spread</h3>
+            <div className="flex-row" style={{ justifyContent: 'space-between' }}>
+              <h3 style={{ margin: 0 }}>Geographic spread</h3>
+              <div className="flex-row" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  className={mapView === 'polygon' ? 'primary' : 'secondary'}
+                  onClick={() => setMapView('polygon')}
+                >
+                  Village outlines
+                </button>
+                <button
+                  type="button"
+                  className={mapView === 'point' ? 'primary' : 'secondary'}
+                  onClick={() => setMapView('point')}
+                >
+                  Points
+                </button>
+              </div>
+            </div>
             <p className="help-text">
-              Only the villages touched by this run are plotted ({markers.length} village{markers.length === 1 ? '' : 's'}) —
+              Only the villages touched by this run are plotted
+              ({mapView === 'polygon' ? polygons.length : markers.length} village{(mapView === 'polygon' ? polygons.length : markers.length) === 1 ? '' : 's'}) —
               colored by assigned surveyor.
+              {mapView === 'polygon' && polygons.length === 0 && markers.length > 0 && (
+                ' No boundary polygons matched (only centroid points) — try the Points view, or upload the boundary file above.'
+              )}
             </p>
-            {markers.length === 0 ? (
+            {!haveAnyGeo ? (
               <p className="help-text">
-                No village centroids matched for this run (either no cases were assigned,
-                or the village centroid dataset isn't loaded on this backend — see
-                ROADMAP.md).
+                No village geometry matched for this run (either no cases were assigned,
+                or neither the centroid nor boundary dataset is loaded on this backend —
+                see ROADMAP.md).
               </p>
             ) : (
               <>
@@ -211,7 +257,20 @@ export default function AutoAssignPage() {
                       attribution='&copy; OpenStreetMap contributors'
                       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     />
-                    {markers.map((m, i) => (
+                    {mapView === 'polygon' && polygons.map((p, i) => (
+                      <Polygon
+                        key={i}
+                        positions={geometryToLeafletPositions(p.geometry)}
+                        pathOptions={{ color: colorFor(p.surveyorId), fillColor: colorFor(p.surveyorId), fillOpacity: 0.45, weight: 1.5 }}
+                      >
+                        <Popup>
+                          <strong>{p.villageName}</strong><br />
+                          Surveyor: {p.surveyorId}<br />
+                          Cases: {p.caseCount}
+                        </Popup>
+                      </Polygon>
+                    ))}
+                    {mapView === 'point' && markers.map((m, i) => (
                       <CircleMarker
                         key={i}
                         center={[m.lat, m.lon]}

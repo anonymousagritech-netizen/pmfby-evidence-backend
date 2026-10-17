@@ -7,6 +7,13 @@ const { tokenFor } = require('../helpers/authToken');
 
 const app = createApp();
 
+// The village centroid + boundary NDJSON files are each lazily loaded into memory in
+// full on first use (by villageLookupService / boundaryLookupService) and can be
+// 150-200MB+ on a real extracted dataset — generous timeout so this suite isn't flaky
+// on a slower CI/dev machine or while the extraction scripts themselves are still
+// running in the background.
+jest.setTimeout(60000);
+
 describe('Auto-assign: RBAC + preview/commit', () => {
   let admin, adminToken, manager, managerToken, surveyor, surveyorToken;
 
