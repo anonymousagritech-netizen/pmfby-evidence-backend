@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { ClipboardList, UserSquare2, Search } from 'lucide-react';
 import { api } from '../api/client';
-import DataTable from '../components/DataTable';
+import DataGrid from '../components/DataGrid';
+import Card from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 
 export default function FarmersPage() {
@@ -38,29 +40,27 @@ export default function FarmersPage() {
     { key: 'district_name', label: 'District', sortable: true },
     { key: 'farmer_mobile', label: 'Mobile', render: (f) => f.farmer_mobile || <span className="help-text">not entered</span> },
     { key: 'assigned_user_id', label: 'Assigned', render: (f) => (f.assigned_user_id ? <span className="badge active">Assigned</span> : <span className="help-text">Unassigned</span>) },
-    { key: 'actions', label: '', render: (f) => <button className="secondary" onClick={() => openFarmer(f.id)}>View</button> },
+    { key: 'actions', label: '', sortable: false, render: (f) => <button className="secondary" onClick={() => openFarmer(f.id)}>View</button> },
   ];
 
   return (
     <div>
-      <div className="card">
-        <h2>Farmers &amp; Case Database</h2>
-        <form onSubmit={runSearch} className="flex-row" style={{ marginBottom: 12 }}>
+      <Card title="Farmers & Case Database" icon={ClipboardList} accent="navy">
+        <form onSubmit={runSearch} className="flex-row" style={{ marginBottom: 14 }}>
           <input placeholder="Search by name or village" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="secondary" type="submit">Search</button>
+          <button className="secondary" type="submit"><Search size={14} style={{ verticalAlign: -2, marginRight: 4 }} />Search</button>
         </form>
-        <DataTable
+        <DataGrid
           columns={columns}
           rows={farmers}
           serverPagination={{ page, pageSize, total, onPageChange: setPage }}
           emptyMessage="No farmers found."
         />
-      </div>
+      </Card>
 
       {selected && (
-        <div className="card">
-          <h3>{selected.farmer_name} — {selected.village_name}</h3>
-          <DataTable
+        <Card title={`${selected.farmer_name} — ${selected.village_name}`} icon={UserSquare2} accent="teal">
+          <DataGrid
             columns={[
               { key: 'docket_id2', label: 'Docket', sortable: true },
               { key: 'scheme_name', label: 'Scheme', sortable: true },
@@ -71,8 +71,9 @@ export default function FarmersPage() {
             rows={cases}
             searchKeys={['docket_id2', 'scheme_name']}
             emptyMessage="No cases for this farmer."
+            height={320}
           />
-        </div>
+        </Card>
       )}
     </div>
   );

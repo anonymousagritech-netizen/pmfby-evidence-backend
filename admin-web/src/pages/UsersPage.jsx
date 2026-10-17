@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { UserPlus, Users as UsersIcon, UploadCloud } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import DataTable from '../components/DataTable';
+import DataGrid from '../components/DataGrid';
+import Card from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 
 const ROLE_OPTIONS = [
@@ -58,8 +60,7 @@ function BulkSurveyorImportCard({ onImported }) {
   }
 
   return (
-    <div className="card">
-      <h2>Bulk Surveyor Import</h2>
+    <Card title="Bulk Surveyor Import" icon={UploadCloud} accent="teal">
       <p className="help-text">
         Upload an Excel file with columns <code>districtName, surveyorName, surveyorMobile,
         Status (Active/Inactive/Delete)</code>. Rows are deduped by mobile number
@@ -119,7 +120,7 @@ function BulkSurveyorImportCard({ onImported }) {
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -203,8 +204,7 @@ export default function UsersPage() {
     <div>
       <BulkSurveyorImportCard onImported={load} />
 
-      <div className="card">
-        <h2>Create User</h2>
+      <Card title="Create User" icon={UserPlus} accent="violet">
         <form onSubmit={handleCreate} className="flex-row" style={{ flexWrap: 'wrap' }}>
           <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
@@ -219,17 +219,17 @@ export default function UsersPage() {
         </form>
         {error && <div className="error-text">{error}</div>}
         {message && <div style={{ color: 'var(--success)', marginTop: 8 }}>{message}</div>}
-      </div>
+      </Card>
 
-      <div className="card">
-        <h2>All Users</h2>
+      <Card title="All Users" icon={UsersIcon} accent="navy">
         <p className="help-text">
           Deactivating a user revokes their access immediately (checked fresh on every
           request, not just at next login). Deleting is a soft delete — their past
           actions remain in the audit trail. You cannot deactivate or delete your own
           account.
         </p>
-        <DataTable
+        <DataGrid
+          rowHeight={76}
           searchKeys={['name', 'email', 'role_key']}
           columns={[
             { key: 'name', label: 'Name', sortable: true },
@@ -282,7 +282,7 @@ export default function UsersPage() {
           rows={users}
           emptyMessage="No users yet."
         />
-      </div>
+      </Card>
     </div>
   );
 }

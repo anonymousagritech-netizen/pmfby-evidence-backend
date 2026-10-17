@@ -1,23 +1,33 @@
+import { Suspense, lazy } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
-import ImportPage from './pages/ImportPage';
-import FarmersPage from './pages/FarmersPage';
-import AssignmentsPage from './pages/AssignmentsPage';
-import AutoAssignPage from './pages/AutoAssignPage';
-import UsersPage from './pages/UsersPage';
-import TemplatesPage from './pages/TemplatesPage';
-import EvidencePage from './pages/EvidencePage';
-import ZipArchivesPage from './pages/ZipArchivesPage';
-import ReviewQueuePage from './pages/ReviewQueuePage';
-import AuditLogsPage from './pages/AuditLogsPage';
 import Layout from './components/Layout';
 import RequireAuth from './components/RequireAuth';
+
+// Every other page pulls in the AG Grid data-grid (and AutoAssignPage additionally
+// pulls in react-leaflet) — code-split them so the initial bundle (login + dashboard,
+// the first thing anyone sees) stays small on Render's free static tier, and the grid/
+// map libraries only download when a page that actually needs them is visited.
+const ImportPage = lazy(() => import('./pages/ImportPage'));
+const FarmersPage = lazy(() => import('./pages/FarmersPage'));
+const AssignmentsPage = lazy(() => import('./pages/AssignmentsPage'));
+const AutoAssignPage = lazy(() => import('./pages/AutoAssignPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const TemplatesPage = lazy(() => import('./pages/TemplatesPage'));
+const EvidencePage = lazy(() => import('./pages/EvidencePage'));
+const ZipArchivesPage = lazy(() => import('./pages/ZipArchivesPage'));
+const ReviewQueuePage = lazy(() => import('./pages/ReviewQueuePage'));
+const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
 
 function Protected({ children }) {
   return (
     <RequireAuth>
-      <Layout>{children}</Layout>
+      <Layout>
+        <Suspense fallback={<div className="help-text" style={{ padding: 20 }}>Loading...</div>}>
+          {children}
+        </Suspense>
+      </Layout>
     </RequireAuth>
   );
 }

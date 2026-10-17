@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Polygon, Popup } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import { Workflow, Map as MapIcon, UploadCloud, Database } from 'lucide-react';
 import { api } from '../api/client';
-import DataTable from '../components/DataTable';
+import DataGrid from '../components/DataGrid';
+import Card from '../components/Card';
 
 // A fixed, readable palette cycled across surveyors (not priority/status colors, which
 // are reserved for badges elsewhere) — distinct enough at a glance for a few dozen
@@ -12,11 +14,7 @@ function colorForSurveyor(id, index) {
   return SURVEYOR_COLORS[index % SURVEYOR_COLORS.length];
 }
 
-// Village-based auto-assignment: admin sets params for a district (or comma-separated
-// list of districts), runs a dry-run Preview to see the per-surveyor breakdown and map,
-// then Commit to actually write farmer_assignments. See ROADMAP.md for what's
-// intentionally scoped down here and why (district-ID-vs-name village matching, etc.)
-function DataUploadCard({ title, description, statusEndpoint, uploadEndpoint }) {
+function DataUploadCard({ title, description, statusEndpoint, uploadEndpoint, accent }) {
   const [status, setStatus] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -49,8 +47,7 @@ function DataUploadCard({ title, description, statusEndpoint, uploadEndpoint }) 
   }
 
   return (
-    <div className="card">
-      <h3>{title}</h3>
+    <Card title={title} icon={UploadCloud} accent={accent}>
       <p className="help-text">{description}</p>
       {status && (
         <p className="help-text">
@@ -60,7 +57,7 @@ function DataUploadCard({ title, description, statusEndpoint, uploadEndpoint }) 
       )}
       <input type="file" accept=".ndjson,.json,.txt" onChange={handleUpload} disabled={uploading} />
       {message && <div className="help-text" style={{ marginTop: 6 }}>{message}</div>}
-    </div>
+    </Card>
   );
 }
 
@@ -76,7 +73,7 @@ export default function AutoAssignPage() {
   const [loading, setLoading] = useState(false);
   const [mapView, setMapView] = useState('polygon'); // 'polygon' | 'point'
   const [surveyors, setSurveyors] = useState([]);
-  const [selectedSurveyors, setSelectedSurveyors] = useState(new Set()); // surveyorIds whose cases are selected for transfer
+  const [selectedRows, setSelectedRows] = useState([]); // selected perSurveyor rows
   const [transferTarget, setTransferTarget] = useState('');
   const [transferMessage, setTransferMessage] = useState(null);
   const [transferring, setTransferring] = useState(false);
@@ -125,22 +122,15 @@ export default function AutoAssignPage() {
     }
   }
 
-  function toggleSurveyorSelection(surveyorId) {
-    const next = new Set(selectedSurveyors);
-    if (next.has(surveyorId)) next.delete(surveyorId);
-    else next.add(surveyorId);
-    setSelectedSurveyors(next);
-  }
-
   async function handleBulkTransfer() {
-    if (!transferTarget || selectedSurveyors.size === 0) return;
+    if (!transferTarget || selectedRows.length === 0) return;
     setTransferring(true);
     setTransferMessage(null);
     try {
-      const farmerIds = [...selectedSurveyors].flatMap((sid) => result?.assignedFarmerIdsBySurveyor?.[sid] || []);
+      const farmerIds = selectedRows.flatMap((s) => result?.assignedFarmerIdsBySurveyor?.[s.surveyorId] || []);
       const res = await api.post('/assignments/bulk-transfer', { farmerIds, toUserId: transferTarget });
       setTransferMessage(`Transferred ${res.data.transferred.length} case(s)${res.data.blocked.length ? `, ${res.data.blocked.length} blocked (unresolved emergency incident)` : ''}.`);
-      setSelectedSurveyors(new Set());
+      setSelectedRows([]);
     } catch (err) {
       setTransferMessage(err.response?.data?.error || 'Bulk transfer failed');
     } finally {
@@ -172,8 +162,7 @@ export default function AutoAssignPage() {
 
   return (
     <div>
-      <div className="card">
-        <h2>Auto-Assign (village-based)</h2>
+      <Card title="Auto-Assign (village-based)" icon={Workflow} accent="navy">
         <p className="help-text">
           One village is always given whole to a single surveyor. Preview is a dry run —
           nothing is written until you Commit.
@@ -207,29 +196,33 @@ export default function AutoAssignPage() {
           <button type="button" className="secondary" disabled={loading} onClick={downloadExcel}>Download Excel</button>
         </div>
         {error && <div className="error-text">{error}</div>}
-      </div>
+      </Card>
 
       <DataUploadCard
         title="Village Centroid Data"
         description="The ~150MB village centroid file isn't in git (see ROADMAP.md) — upload it here once per backend deploy so map/fuzzy-match features have data to work with."
         statusEndpoint="/village-data/status"
         uploadEndpoint="/village-data/upload"
+        accent="teal"
       />
       <DataUploadCard
         title="Village Boundary Polygon Data"
         description="The ~200MB simplified village boundary polygon file isn't in git either (see ROADMAP.md) — upload it here once per backend deploy so the polygon map view below has shapes to draw."
         statusEndpoint="/boundaries/status"
         uploadEndpoint="/boundaries/upload"
+        accent="sky"
       />
 
       {result && (
         <>
           <div className="stat-grid">
             <div className="stat-card" style={{ '--accent': 'var(--navy)' }}>
+              <span className="stat-icon"><Database size={17} /></span>
               <span className="stat-label">Total Cases</span>
               <span className="stat-value">{result.totalCases}</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--p3-dot)' }}>
+              <span className="stat-icon"><Workflow size={17} /></span>
               <span className="stat-label">Assigned</span>
               <span className="stat-value">{result.totalAssigned}</span>
             </div>
@@ -243,26 +236,22 @@ export default function AutoAssignPage() {
             </div>
           </div>
 
-          <div className="card">
-            <h3>{result.mode === 'commit' ? 'Committed' : 'Preview'}: per-surveyor breakdown</h3>
+          <Card
+            title={`${result.mode === 'commit' ? 'Committed' : 'Preview'}: per-surveyor breakdown`}
+            icon={Workflow}
+            accent="violet"
+          >
             <p className="help-text">
-              Select one or more surveyors' rows, then use "Transfer selected to..."
-              below to move all of their cases from this run to a different surveyor in
-              one bulk operation — useful for post-hoc rebalancing, surveyor turnover,
-              or leave coverage.
+              Select one or more surveyors' rows (checkboxes), then use "Transfer
+              selected to..." below to move all of their cases from this run to a
+              different surveyor in one bulk operation — useful for post-hoc
+              rebalancing, surveyor turnover, or leave coverage.
             </p>
-            <DataTable
+            <DataGrid
+              selectable
+              onSelectionChanged={setSelectedRows}
               searchKeys={['surveyorId']}
               columns={[
-                {
-                  key: 'select', label: '', render: (s) => (
-                    <input
-                      type="checkbox"
-                      checked={selectedSurveyors.has(s.surveyorId)}
-                      onChange={() => toggleSurveyorSelection(s.surveyorId)}
-                    />
-                  ),
-                },
                 { key: 'surveyorId', label: 'Surveyor', sortable: true, render: (s) => (
                   <span><span className="legend-dot" style={{ background: colorFor(s.surveyorId) }} />{surveyorName(s.surveyorId)}</span>
                 ) },
@@ -272,47 +261,43 @@ export default function AutoAssignPage() {
                 { key: 'p1', label: 'P1', sortable: true, render: (s) => <span className="badge priority-p1">{s.p1}</span> },
                 { key: 'p2', label: 'P2', sortable: true, render: (s) => <span className="badge priority-p2">{s.p2}</span> },
                 { key: 'p3', label: 'P3', sortable: true, render: (s) => <span className="badge priority-p3">{s.p3}</span> },
-                { key: 'underMinimum', label: 'Under min?', render: (s) => (s.underMinimum ? <span className="badge denied">Yes</span> : '') },
+                { key: 'underMinimum', label: 'Under min?', sortable: false, render: (s) => (s.underMinimum ? <span className="badge denied">Yes</span> : '') },
               ]}
               rows={result.perSurveyor || []}
               emptyMessage="No surveyors matched."
+              height={320}
             />
             <div className="flex-row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-              <span className="help-text">{selectedSurveyors.size} surveyor(s) selected</span>
+              <span className="help-text">{selectedRows.length} surveyor(s) selected</span>
               <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ width: 220 }}>
                 <option value="">Transfer selected to...</option>
-                {surveyors.filter((s) => !selectedSurveyors.has(s.id)).map((s) => (
+                {surveyors.filter((s) => !selectedRows.some((r) => r.surveyorId === s.id)).map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <button type="button" className="primary" disabled={transferring || selectedSurveyors.size === 0 || !transferTarget}
+              <button type="button" className="primary" disabled={transferring || selectedRows.length === 0 || !transferTarget}
                 onClick={handleBulkTransfer}>
                 Transfer
               </button>
             </div>
             {transferMessage && <div className="help-text" style={{ marginTop: 6 }}>{transferMessage}</div>}
-          </div>
+          </Card>
 
-          <div className="card">
-            <div className="flex-row" style={{ justifyContent: 'space-between' }}>
-              <h3 style={{ margin: 0 }}>Geographic spread</h3>
+          <Card
+            title="Geographic spread"
+            icon={MapIcon}
+            accent="teal"
+            actions={(
               <div className="flex-row" style={{ gap: 6 }}>
-                <button
-                  type="button"
-                  className={mapView === 'polygon' ? 'primary' : 'secondary'}
-                  onClick={() => setMapView('polygon')}
-                >
+                <button type="button" className={mapView === 'polygon' ? 'primary' : 'secondary'} onClick={() => setMapView('polygon')}>
                   Village outlines
                 </button>
-                <button
-                  type="button"
-                  className={mapView === 'point' ? 'primary' : 'secondary'}
-                  onClick={() => setMapView('point')}
-                >
+                <button type="button" className={mapView === 'point' ? 'primary' : 'secondary'} onClick={() => setMapView('point')}>
                   Points
                 </button>
               </div>
-            </div>
+            )}
+          >
             <p className="help-text">
               Only the villages touched by this run are plotted
               ({mapView === 'polygon' ? polygons.length : markers.length} village{(mapView === 'polygon' ? polygons.length : markers.length) === 1 ? '' : 's'}) —
@@ -371,7 +356,7 @@ export default function AutoAssignPage() {
                 </div>
               </>
             )}
-          </div>
+          </Card>
         </>
       )}
     </div>

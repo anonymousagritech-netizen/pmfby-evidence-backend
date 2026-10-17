@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Archive } from 'lucide-react';
 import { api } from '../api/client';
-import DataTable from '../components/DataTable';
+import DataGrid from '../components/DataGrid';
+import Card from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 
 export default function ZipArchivesPage() {
@@ -25,14 +27,13 @@ export default function ZipArchivesPage() {
     { key: 'status', label: 'Status', sortable: true, render: (z) => <StatusBadge status={z.status} /> },
     { key: 'size_bytes', label: 'Size', sortable: true, render: (z) => (z.size_bytes ? `${Math.round(z.size_bytes / 1024)} KB` : '-') },
     { key: 'created_at', label: 'Created', sortable: true, render: (z) => new Date(z.created_at).toLocaleString() },
-    { key: 'actions', label: '', render: (z) => (z.status === 'ready' ? <button className="secondary" onClick={() => download(z.id, z.filename)}>Download</button> : null) },
+    { key: 'actions', label: '', sortable: false, render: (z) => (z.status === 'ready' ? <button className="secondary" onClick={() => download(z.id, z.filename)}>Download</button> : null) },
   ];
 
   return (
-    <div className="card">
-      <h2>ZIP Archive Management</h2>
+    <Card title="ZIP Archive Management" icon={Archive} accent="amber">
       <p className="help-text">One ZIP per contact attempt (call_event). Status is async: pending → processing → ready/failed.</p>
-      <DataTable columns={columns} rows={zips} searchKeys={['filename', 'status']} emptyMessage="No ZIP archives yet." />
-    </div>
+      <DataGrid columns={columns} rows={zips} searchKeys={['filename', 'status']} emptyMessage="No ZIP archives yet." />
+    </Card>
   );
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { History } from 'lucide-react';
 import { api } from '../api/client';
-import DataTable from '../components/DataTable';
+import DataGrid from '../components/DataGrid';
+import Card from '../components/Card';
 
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState([]);
@@ -24,14 +26,13 @@ export default function AuditLogsPage() {
   ];
 
   return (
-    <div className="card">
-      <h2>Audit Logs</h2>
-      <DataTable
+    <Card title="Audit Logs" icon={History} accent="sky">
+      <DataGrid
         columns={columns}
         rows={logs}
         serverPagination={{ page, pageSize, total, onPageChange: setPage }}
         emptyMessage="No audit log entries."
       />
-    </div>
+    </Card>
   );
 }
