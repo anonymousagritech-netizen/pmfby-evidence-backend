@@ -184,9 +184,9 @@ function HomeDistrictsEditor({ user, districtDraft, setDistrictDraft, onAdd, onR
                   onChange={(e) => setDistrictDraft({ ...districtDraft, [user.id]: e.target.value })}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onAdd(user); } }}
                 />
-                <button type="button" className="secondary" onClick={() => onAdd(user)}>Add</button>
+                <button type="button" className="secondary sm" onClick={() => onAdd(user)}>Add</button>
               </div>
-              <button type="button" className="primary" style={{ marginTop: 10, width: '100%' }} onClick={() => setOpen(false)}>Done</button>
+              <button type="button" className="primary sm" style={{ marginTop: 10, width: '100%' }} onClick={() => setOpen(false)}>Done</button>
             </div>
           </div>
         </>,
@@ -328,11 +328,11 @@ export default function UsersPage() {
               label: '',
               render: (u) => (u.id !== currentUser?.id ? (
                 <>
-                  <button className="secondary" onClick={() => toggleActive(u)}>
+                  <button className="secondary sm" onClick={() => toggleActive(u)}>
                     {u.is_active ? 'Deactivate' : 'Reactivate'}
                   </button>
                   {' '}
-                  <button className="secondary" onClick={() => handleDelete(u)}>Delete</button>
+                  <button className="secondary sm" onClick={() => handleDelete(u)}>Delete</button>
                 </>
               ) : <span className="help-text">(you)</span>),
             },
