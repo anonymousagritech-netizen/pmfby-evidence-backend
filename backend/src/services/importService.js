@@ -47,6 +47,7 @@ async function applyVillageAutoCorrection(fields) {
 const STRING_ID_FIELDS = new Set([
   'Docket_ID2', 'Application_No', 'State_ID', 'District_ID',
   'Level4_ID', 'Level5_ID', 'Level6_ID', 'Level7_ID',
+  'Farmer_Mobile', // keep as text: never let Excel numeric coercion drop/format digits
 ]);
 
 const REQUIRED_FIELDS = ['Farmer_Name'];
@@ -136,13 +137,25 @@ function validateFields(fields) {
   return errors;
 }
 
+// Cleans a farmer mobile from Excel: handles numbers (8587870501), "8587870501.0",
+// "+91 85878 70501", "91-8587870501". Returns the 10-digit Indian mobile, or null when
+// the value isn't a plausible number (never stores junk or guesses).
+function normalizeFarmerMobile(value) {
+  if (value === null || value === undefined || value === '') return null;
+  let digits = String(value).trim().replace(/\.0+$/, '').replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return /^[6-9]\d{9}$/.test(digits) ? digits : null;
+}
+
 async function findOrCreateFarmer(client, fields) {
-  const dedupeKey = buildDedupeKey({
+  const farmerMobile = normalizeFarmerMobile(fields.Farmer_Mobile);
+  const keyParts = {
     farmerName: fields.Farmer_Name,
     villageId: fields.Level7_ID,
     villageName: fields.Level7_Name,
-    farmerMobile: null, // never sourced from import — see spec: no guaranteed farmer-mobile column
-  });
+  };
+  const dedupeKey = buildDedupeKey({ ...keyParts, farmerMobile });
 
   const existing = await client.query(
     'SELECT id FROM farmer_records WHERE dedupe_key = $1 AND deleted_at IS NULL LIMIT 1',
@@ -150,13 +163,32 @@ async function findOrCreateFarmer(client, fields) {
   );
   if (existing.rows[0]) return existing.rows[0].id;
 
+  // Farmers imported BEFORE mobile support have a no-mobile dedupe key. If this row now
+  // carries a mobile, adopt that existing record (and backfill it) instead of creating
+  // a duplicate farmer. Never overwrites a mobile that is already set.
+  if (farmerMobile) {
+    const legacyKey = buildDedupeKey({ ...keyParts, farmerMobile: null });
+    const legacy = await client.query(
+      `SELECT id FROM farmer_records
+         WHERE dedupe_key = $1 AND farmer_mobile IS NULL AND deleted_at IS NULL LIMIT 1`,
+      [legacyKey]
+    );
+    if (legacy.rows[0]) {
+      await client.query(
+        'UPDATE farmer_records SET farmer_mobile = $2, dedupe_key = $3, updated_at = now() WHERE id = $1',
+        [legacy.rows[0].id, farmerMobile, dedupeKey]
+      );
+      return legacy.rows[0].id;
+    }
+  }
+
   const inserted = await client.query(
     `INSERT INTO farmer_records (farmer_name, village_name, village_id, district_name,
-       district_id, state_name, state_id, dedupe_key)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+       district_id, state_name, state_id, farmer_mobile, dedupe_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [
       fields.Farmer_Name, fields.Level7_Name, fields.Level7_ID, fields.District_Name,
-      fields.District_ID, fields.State_Name, fields.State_ID, dedupeKey,
+      fields.District_ID, fields.State_Name, fields.State_ID, farmerMobile, dedupeKey,
     ]
   );
   return inserted.rows[0].id;
@@ -322,7 +354,7 @@ async function commitImport({ sessionId, confirmedMapping, uploadedBy }) {
 // own export tool would produce, so a downloaded template matches what they'd actually
 // paste data into. One EXAMPLE row with plausible values, clearly marked to delete.
 const TEMPLATE_HEADERS = [
-  'docketID', 'seasonName', 'schemeName', 'applicationNo', 'farmerName',
+  'docketID', 'seasonName', 'schemeName', 'applicationNo', 'farmerName', 'farmerMobile',
   'typeOfIncidence', 'dateOfIncidence', 'cropStatusAtIncidence', 'farmerIntimationDate',
   'sowingDate', 'farmArea', 'cropName', 'stateName', 'stateID', 'districtID', 'districtName',
   'level4Name', 'level4ID', 'level5Name', 'level5ID', 'level6Name', 'level6ID',
@@ -334,7 +366,7 @@ const TEMPLATE_HEADERS = [
 ];
 const TEMPLATE_EXAMPLE_ROW = {
   docketID: '040106260002542975', seasonName: 'KHARIF', schemeName: 'PMFBY',
-  applicationNo: '040106261031541068110', farmerName: 'EXAMPLE Jogender Singh',
+  applicationNo: '040106261031541068110', farmerName: 'EXAMPLE Jogender Singh', farmerMobile: '9999999999',
   typeOfIncidence: 'Unseasonal Rains', dateOfIncidence: '2026-10-12',
   cropStatusAtIncidence: 'Harvested', farmerIntimationDate: '2026-10-13',
   sowingDate: '2026-07-01', farmArea: 0.0683, cropName: 'Paddy (Dhan)',
@@ -370,5 +402,6 @@ module.exports = {
   commitImport,
   applyVillageAutoCorrection,
   pickWorksheet,
+  normalizeFarmerMobile,
   buildImportTemplateWorkbook,
 };
