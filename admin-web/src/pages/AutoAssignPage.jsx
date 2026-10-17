@@ -217,12 +217,12 @@ export default function AutoAssignPage() {
         <>
           <div className="stat-grid">
             <div className="stat-card" style={{ '--accent': 'var(--navy)' }}>
-              <span className="stat-icon"><Database size={17} /></span>
+              <span className="stat-icon"><Database size={13} /></span>
               <span className="stat-label">Total Cases</span>
               <span className="stat-value">{result.totalCases}</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--p3-dot)' }}>
-              <span className="stat-icon"><Workflow size={17} /></span>
+              <span className="stat-icon"><Workflow size={13} /></span>
               <span className="stat-label">Assigned</span>
               <span className="stat-value">{result.totalAssigned}</span>
             </div>

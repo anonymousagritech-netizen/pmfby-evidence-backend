@@ -124,7 +124,7 @@ a { color: var(--navy-light); text-decoration: none; }
 }
 .panel-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; border-radius: 9px;
+  width: 24px; height: 24px; border-radius: 7px;
   background: var(--panel-accent, var(--navy)); color: #fff;
   flex-shrink: 0;
 }
@@ -161,8 +161,8 @@ a { color: var(--navy-light); text-decoration: none; }
 }
 .stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .stat-card .stat-icon {
-  position: absolute; top: 14px; right: 14px; width: 34px; height: 34px;
-  border-radius: 9px; display: flex; align-items: center; justify-content: center;
+  position: absolute; top: 14px; right: 14px; width: 24px; height: 24px;
+  border-radius: 7px; display: flex; align-items: center; justify-content: center;
   background: var(--accent, var(--navy)); color: #fff; opacity: 0.9;
 }
 .stat-card .stat-label { font-size: 12px; color: var(--neutral-500); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }

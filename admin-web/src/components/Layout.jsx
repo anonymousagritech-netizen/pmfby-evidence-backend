@@ -31,11 +31,11 @@ export default function Layout({ children }) {
   return (
     <div className="app-shell">
       <div className="sidebar">
-        <h1><Sprout size={18} /> PMFBY Evidence</h1>
+        <h1><Sprout size={15} /> PMFBY Evidence</h1>
         <nav>
           {NAV_ITEMS.map(({ to, end, label, icon: Icon }) => (
             <NavLink key={to} to={to} end={end}>
-              <Icon size={17} />
+              <Icon size={15} />
               <span>{label}</span>
             </NavLink>
           ))}

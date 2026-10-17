@@ -14,11 +14,18 @@ const gridTheme = themeQuartz.withParams({
   headerBackgroundColor: '#eef3f9',
   headerTextColor: '#0f2a4a',
   headerFontWeight: 700,
-  borderColor: '#dde2ea',
+  borderColor: '#d1d5db',
   rowHoverColor: '#eef3f9',
   wrapperBorderRadius: 10,
   fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
   fontSize: 13.5,
+  // "Proper grid border" — vertical AND horizontal cell borders so every cell reads
+  // as a distinct boxed Excel cell, not just a borderless list with row separators.
+  wrapperBorder: true,
+  headerRowBorder: true,
+  headerColumnBorder: true,
+  rowBorder: true,
+  columnBorder: true,
 });
 
 // Same external API as the old hand-rolled DataTable (columns/rows/searchKeys/

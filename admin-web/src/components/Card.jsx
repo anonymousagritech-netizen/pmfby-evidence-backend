@@ -7,7 +7,7 @@ export default function Card({ title, icon: Icon, accent = 'navy', children, act
     <div className={`panel panel-${accent}`}>
       {(title || Icon) && (
         <div className="panel-header">
-          {Icon && <span className="panel-icon"><Icon size={18} /></span>}
+          {Icon && <span className="panel-icon"><Icon size={14} /></span>}
           {title && <h2 className="panel-title">{title}</h2>}
           {actions && <div className="panel-actions">{actions}</div>}
         </div>

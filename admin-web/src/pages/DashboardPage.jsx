@@ -61,28 +61,28 @@ export default function DashboardPage() {
         <>
           <div className="stat-grid">
             <div className="stat-card" style={{ '--accent': 'var(--navy)' }}>
-              <span className="stat-icon"><BarChart3 size={17} /></span>
+              <span className="stat-icon"><BarChart3 size={13} /></span>
               <span className="stat-label">Total Cases</span>
               <span className="stat-value">{summary.totalCases}</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--p3-dot)' }}>
-              <span className="stat-icon"><CheckCircle2 size={17} /></span>
+              <span className="stat-icon"><CheckCircle2 size={13} /></span>
               <span className="stat-label">Completed</span>
               <span className="stat-value">{completed}</span>
               <span className="stat-sub">{summary.totalCases ? Math.round((completed / summary.totalCases) * 100) : 0}% of total</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--amber)' }}>
-              <span className="stat-icon"><Clock size={17} /></span>
+              <span className="stat-icon"><Clock size={13} /></span>
               <span className="stat-label">Pending / Open</span>
               <span className="stat-value">{pending}</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--p1-dot)' }}>
-              <span className="stat-icon"><AlertTriangle size={17} /></span>
+              <span className="stat-icon"><AlertTriangle size={13} /></span>
               <span className="stat-label">Emergency Reviews Pending</span>
               <span className="stat-value">{summary.pendingEmergencyReviews}</span>
             </div>
             <div className="stat-card" style={{ '--accent': 'var(--violet)' }}>
-              <span className="stat-icon"><ShieldAlert size={17} /></span>
+              <span className="stat-icon"><ShieldAlert size={13} /></span>
               <span className="stat-label">Discrepancy Flags Pending</span>
               <span className="stat-value">{summary.pendingDiscrepancyFlags}</span>
             </div>
