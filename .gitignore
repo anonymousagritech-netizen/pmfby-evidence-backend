@@ -11,3 +11,9 @@ coverage/
 *.sqlite
 .DS_Store
 Thumbs.db
+
+# Village centroid NDJSON extracted from the all-India boundary shapefile is ~150MB —
+# too large to commit comfortably. Kept on disk only; regenerate with
+# backend/scripts/extract_village_centroids.js. The small summary JSON IS tracked.
+backend/data/village_centroids.ndjson
+backend/scripts/extract_log.txt

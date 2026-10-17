@@ -19,6 +19,7 @@ const zipArchiveRoutes = require('./routes/zipArchives');
 const auditLogRoutes = require('./routes/auditLogs');
 const integrityConcernRoutes = require('./routes/integrityConcerns');
 const reportRoutes = require('./routes/reports');
+const autoAssignRoutes = require('./routes/autoAssign');
 
 function createApp() {
   const app = express();
@@ -44,6 +45,7 @@ function createApp() {
   app.use('/api/audit-logs', auditLogRoutes);
   app.use('/api/integrity-concerns', integrityConcernRoutes);
   app.use('/api/reports', reportRoutes);
+  app.use('/api/auto-assign', autoAssignRoutes);
 
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

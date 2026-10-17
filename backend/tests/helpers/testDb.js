@@ -7,7 +7,7 @@ const { hashPassword } = require('../../src/utils/auth');
 // don't seed them — tests seed roles/templates themselves via ensureRolesAndTemplates).
 async function resetDb() {
   await pool.query(`
-    TRUNCATE TABLE audit_logs, import_batches, zip_archives, evidence_files,
+    TRUNCATE TABLE assignment_runs, audit_logs, import_batches, zip_archives, evidence_files,
       emergency_incidents, discrepancy_flags, integrity_concerns, message_events,
       call_recordings, call_events, farmer_assignments, survey_cases, farmer_records,
       message_templates, users, roles RESTART IDENTITY CASCADE
@@ -43,7 +43,8 @@ async function createUser({ name, email, roleKey, scopeStateId, scopeDistrictId 
 }
 
 async function createFarmerWithCase({ farmerName = 'Test Farmer', village = 'TestVillage', villageId = 'V1',
-  stateId = 'HR', districtId = 'HR-01', docketId2 = `D-${Date.now()}-${Math.random()}`, applicationNo = `A-${Date.now()}` } = {}) {
+  stateId = 'HR', districtId = 'HR-01', docketId2 = `D-${Date.now()}-${Math.random()}`, applicationNo = `A-${Date.now()}`,
+  intimationDate = null } = {}) {
   const { rows: farmerRows } = await pool.query(
     `INSERT INTO farmer_records (farmer_name, village_name, village_id, district_id, state_id, dedupe_key)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -51,9 +52,9 @@ async function createFarmerWithCase({ farmerName = 'Test Farmer', village = 'Tes
   );
   const farmer = farmerRows[0];
   const { rows: caseRows } = await pool.query(
-    `INSERT INTO survey_cases (farmer_id, docket_id2, application_no, state_id, district_id, level7_name, level7_id, survey_status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'ASSIGNED') RETURNING *`,
-    [farmer.id, docketId2, applicationNo, stateId, districtId, village, villageId]
+    `INSERT INTO survey_cases (farmer_id, docket_id2, application_no, state_id, district_id, level7_name, level7_id, survey_status, farmer_intimation_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'ASSIGNED',$8) RETURNING *`,
+    [farmer.id, docketId2, applicationNo, stateId, districtId, village, villageId, intimationDate]
   );
   return { farmer, surveyCase: caseRows[0] };
 }
