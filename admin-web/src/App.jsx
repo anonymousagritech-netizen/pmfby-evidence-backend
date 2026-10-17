@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import Layout from './components/Layout';
 import RequireAuth from './components/RequireAuth';
@@ -36,6 +37,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Not wrapped in Layout — full-screen like /login, reached via RequireAuth's
+          redirect before the sidebar/nav chrome would make sense to show anyway. */}
+      <Route path="/change-password" element={<RequireAuth><ChangePasswordPage /></RequireAuth>} />
       <Route path="/" element={<Protected><DashboardPage /></Protected>} />
       <Route path="/import" element={<Protected><ImportPage /></Protected>} />
       <Route path="/farmers" element={<Protected><FarmersPage /></Protected>} />

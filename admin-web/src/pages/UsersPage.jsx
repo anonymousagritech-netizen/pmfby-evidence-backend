@@ -1,11 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { UserPlus, Users as UsersIcon, UploadCloud, MapPin } from 'lucide-react';
+import { UserPlus, Users as UsersIcon, UploadCloud, MapPin, KeyRound, Download } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import DataGrid from '../components/DataGrid';
 import Card from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
+
+// mobile,email,temp_password CSV for the credentials just shown once after a bulk
+// import commit — this is the ONLY export path for these plaintext passwords; nothing
+// server-side ever stores or re-serves them after the commit response.
+function downloadCredentialsCsv(credentials) {
+  const header = 'mobile,email,temp_password\n';
+  const rows = credentials.map((c) => `${c.mobile},${c.email},${c.tempPassword}`).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `surveyor-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 const ROLE_OPTIONS = [
   { key: 'super_admin', label: 'Super Admin' },
@@ -63,12 +78,7 @@ function BulkSurveyorImportCard({ onImported }) {
   return (
     <Card title="Bulk Surveyor Import" icon={UploadCloud} accent="teal">
       <p className="help-text">
-        Upload an Excel file with columns <code>districtName, surveyorName, surveyorMobile,
-        Status (Active/Inactive/Delete)</code>. Rows are deduped by mobile number
-        (names can collide, mobile is the stable identifier); every district seen for a
-        mobile is collected into that surveyor's home-district list. Status drives the
-        account lifecycle: Active creates/reactivates, Inactive deactivates, Delete
-        soft-deletes. A mobile not mentioned in a later upload is left untouched.
+        Columns: districtName, surveyorName, surveyorMobile, Status. Deduped by mobile; Status drives create/activate/deactivate/delete.
       </p>
       <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={busy} />
       {error && <div className="error-text">{error}</div>}
@@ -104,20 +114,45 @@ function BulkSurveyorImportCard({ onImported }) {
               <span className="stat-label">Skipped (no status)</span><span className="stat-value">{result.summary.skippedNoStatus}</span>
             </div>
           </div>
+          {result.credentials.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="flex-row" style={{ justifyContent: 'space-between' }}>
+                <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <KeyRound size={14} /> New login credentials ({result.credentials.length})
+                </h3>
+                <button type="button" className="secondary sm" onClick={() => downloadCredentialsCsv(result.credentials)}>
+                  <Download size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Download CSV
+                </button>
+              </div>
+              <p className="help-text">Shown once — not recoverable after you leave this page. Save or share now.</p>
+              <DataGrid
+                columns={[
+                  { key: 'mobile', label: 'Mobile', sortable: true },
+                  { key: 'name', label: 'Name', sortable: true },
+                  { key: 'email', label: 'Login Email', sortable: true },
+                  { key: 'tempPassword', label: 'Temp Password', sortable: false, render: (c) => <code>{c.tempPassword}</code> },
+                ]}
+                rows={result.credentials}
+                emptyMessage="No new accounts created."
+                height={Math.min(300, 60 + result.credentials.length * 42)}
+              />
+            </div>
+          )}
           {result.warnings.length > 0 && (
-            <>
-              <h4>Data-quality warnings: conflicting status values</h4>
-              <table>
-                <thead><tr><th>Mobile</th><th>Name</th><th>Status values seen</th><th>Resolved to</th></tr></thead>
-                <tbody>
-                  {result.warnings.map((w) => (
-                    <tr key={w.mobile}>
-                      <td>{w.mobile}</td><td>{w.name}</td><td>{w.statusValuesSeen.join(', ')}</td><td>{w.resolvedTo}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
+            <div style={{ marginTop: 16 }}>
+              <h3>Data-quality warnings</h3>
+              <DataGrid
+                columns={[
+                  { key: 'mobile', label: 'Mobile', sortable: true },
+                  { key: 'name', label: 'Name', sortable: true },
+                  { key: 'statusValuesSeen', label: 'Status values seen', sortable: false, render: (w) => w.statusValuesSeen.join(', ') },
+                  { key: 'resolvedTo', label: 'Resolved to', sortable: true },
+                ]}
+                rows={result.warnings}
+                emptyMessage="No conflicts."
+                height={Math.min(280, 60 + result.warnings.length * 42)}
+              />
+            </div>
           )}
         </div>
       )}
@@ -202,12 +237,37 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [resetResult, setResetResult] = useState(null);
+  const [resetting, setResetting] = useState(false);
 
   async function load() {
     const res = await api.get('/users');
     setUsers(res.data.users);
   }
   useEffect(() => { load(); }, []);
+
+  // Bootstraps accounts whose password nobody has (e.g. the 121 real surveyors
+  // created by the first bulk import, before the show-once-at-creation fix existed —
+  // their passwords were generated, hashed, and never shown to anyone, so a reset is
+  // the only way back in). Works for one selected user or many at once.
+  async function handleBulkReset() {
+    if (selectedUsers.length === 0) return;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Reset the password for ${selectedUsers.length} user(s)? Their current password (whatever it is) will stop working immediately.`)) return;
+    setResetting(true);
+    setError(null);
+    setResetResult(null);
+    try {
+      const res = await api.post('/users/bulk-reset-password', { userIds: selectedUsers.map((u) => u.id) });
+      setResetResult(res.data);
+      setSelectedUsers([]);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Password reset failed');
+    } finally {
+      setResetting(false);
+    }
+  }
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -294,13 +354,44 @@ export default function UsersPage() {
       </Card>
 
       <Card title="All Users" icon={UsersIcon} accent="navy">
-        <p className="help-text">
-          Deactivating a user revokes their access immediately (checked fresh on every
-          request, not just at next login). Deleting is a soft delete — their past
-          actions remain in the audit trail. You cannot deactivate or delete your own
-          account.
-        </p>
+        <p className="help-text">Deactivate/delete revoke access immediately; both are reversible. You can't act on your own account.</p>
+
+        <div className="flex-row" style={{ marginBottom: 10, flexWrap: 'wrap' }}>
+          <span className="help-text">{selectedUsers.length} selected</span>
+          <button type="button" className="secondary sm" disabled={selectedUsers.length === 0 || resetting} onClick={handleBulkReset}>
+            <KeyRound size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+            Reset Password{selectedUsers.length === 1 ? '' : 's'} for Selected
+          </button>
+        </div>
+
+        {resetResult && (
+          <div style={{ marginBottom: 16 }}>
+            <div className="flex-row" style={{ justifyContent: 'space-between' }}>
+              <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <KeyRound size={14} /> New passwords ({resetResult.resetCount})
+              </h3>
+              <button type="button" className="secondary sm" onClick={() => downloadCredentialsCsv(resetResult.credentials)}>
+                <Download size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Download CSV
+              </button>
+            </div>
+            <p className="help-text">Shown once — not recoverable after you leave this page.</p>
+            <DataGrid
+              columns={[
+                { key: 'mobile', label: 'Mobile', sortable: true, render: (c) => c.mobile || '-' },
+                { key: 'name', label: 'Name', sortable: true },
+                { key: 'email', label: 'Login Email', sortable: true },
+                { key: 'tempPassword', label: 'New Password', sortable: false, render: (c) => <code>{c.tempPassword}</code> },
+              ]}
+              rows={resetResult.credentials}
+              emptyMessage="No passwords reset."
+              height={Math.min(300, 60 + resetResult.credentials.length * 42)}
+            />
+          </div>
+        )}
+
         <DataGrid
+          selectable
+          onSelectionChanged={setSelectedUsers}
           searchKeys={['name', 'email', 'role_key']}
           columns={[
             { key: 'name', label: 'Name', sortable: true },

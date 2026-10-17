@@ -27,8 +27,20 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // Called right after a successful POST /api/auth/change-password so RequireAuth's
+  // mandatory-change gate releases immediately, without waiting for the next full
+  // login/token refresh to pick up the server's now-false force_password_change.
+  const clearForcePasswordChange = useCallback(() => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, forcePasswordChange: false };
+      localStorage.setItem('pmfby_user', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout, clearForcePasswordChange }}>
       {children}
     </AuthContext.Provider>
   );

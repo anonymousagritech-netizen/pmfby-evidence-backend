@@ -115,7 +115,11 @@ async function createImportPreview({ buffer, originalFilename, uploadedBy }) {
 }
 
 function generateTempPassword() {
-  return crypto.randomBytes(9).toString('base64url'); // ~12 chars, URL-safe, never logged/returned
+  // ~12 chars, URL-safe. Returned exactly once, in commitSurveyorImport's response
+  // (see `credentials`), for the admin to relay to the surveyor — never logged, never
+  // written to audit_logs, and not recoverable after that response (only the bcrypt
+  // hash is persisted). A lost password needs a real reset, not a lookup.
+  return crypto.randomBytes(9).toString('base64url');
 }
 
 // One upsert per surveyor group. NOT exported directly — always called from
@@ -162,7 +166,11 @@ async function upsertSurveyor(client, group, importedBy) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING id`,
       [group.name, email, group.mobile, passwordHash, surveyorRoleId, group.districts, wantActive]
     );
-    return { action: 'created', mobile: group.mobile, userId: rows[0].id, email, finalStatus: group.finalStatus };
+    // tempPassword is returned here ONLY so commitSurveyorImport can hand it back to
+    // the caller once, at creation time (see credentials[] below) — it is never
+    // written to audit_logs or anywhere else persistent. There is no way to recover it
+    // after this response; a lost password needs a real reset, not a lookup.
+    return { action: 'created', mobile: group.mobile, userId: rows[0].id, email, finalStatus: group.finalStatus, tempPassword };
   }
 
   // Existing account: re-upload upsert — update districts + status; never touch
@@ -194,11 +202,24 @@ async function commitSurveyorImport({ sessionId, importedBy }) {
     mobile: g.mobile, name: g.name, statusValuesSeen: g.statusValuesSeen, resolvedTo: g.finalStatus,
   }));
   const changeLog = [];
+  // Mobile + plaintext temp password for every account CREATED in this commit only
+  // (never for an already-existing account re-upserted by this run — "show once at
+  // creation" means exactly that run, not retroactively for prior imports). This is
+  // the only place these plaintext values ever exist outside the admin's own copy —
+  // not logged, not in audit_logs, not persisted anywhere after this response.
+  const credentials = [];
 
   await withTransaction(async (client) => {
     for (const group of groups) {
       const result = await upsertSurveyor(client, group, importedBy);
-      changeLog.push(result);
+      if (result.action === 'created' && result.tempPassword) {
+        credentials.push({ mobile: result.mobile, name: group.name, email: result.email, tempPassword: result.tempPassword });
+      }
+      // Never let the plaintext password reach audit_logs (or anywhere else
+      // persistent) — strip it before it's added to the change log that gets
+      // embedded in the batch audit row's metadata below.
+      const { tempPassword, ...resultForAudit } = result;
+      changeLog.push(resultForAudit);
       switch (result.action) {
         case 'created': summary.created += 1; break;
         case 'updated': summary.updated += 1; break;
@@ -228,7 +249,7 @@ async function commitSurveyorImport({ sessionId, importedBy }) {
   });
 
   importSessionStore.deleteSession(sessionId);
-  return { summary, warnings, changeLog };
+  return { summary, warnings, changeLog, credentials };
 }
 
 module.exports = {
@@ -237,4 +258,5 @@ module.exports = {
   commitSurveyorImport,
   normalizeMobile,
   normalizeStatus,
+  generateTempPassword,
 };

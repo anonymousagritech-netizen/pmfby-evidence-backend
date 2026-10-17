@@ -38,6 +38,52 @@ router.post('/bulk-import/commit', requireRole(ROLES.SUPER_ADMIN), async (req, r
   }
 });
 
+// Reset the password for one or more users at once (bulk by design — built to
+// actually bootstrap the real 121 surveyor accounts created by the first bulk import
+// before this password-retrieval gap was fixed, whose passwords were generated,
+// hashed, and never shown to anyone; a one-at-a-time reset would be impractical at
+// that scale). Generates a brand-new random temp password per user (invalidating
+// whatever unknown password was there before), sets force_password_change, and
+// returns the plaintext list ONCE — same "shown once, never retrievable again" rule
+// as a bulk-import creation. One batch audit row covers the whole action; Super Admin
+// only, since overwriting another account's password is a sensitive action.
+router.post('/bulk-reset-password', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { userIds } = req.body;
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: 'userIds (non-empty array) required' });
+    }
+    const { rows: users } = await pool.query(
+      `SELECT id, name, email, phone FROM users WHERE id = ANY($1) AND deleted_at IS NULL`,
+      [userIds]
+    );
+    if (users.length === 0) return res.status(404).json({ error: 'No matching users found' });
+
+    const credentials = [];
+    for (const u of users) {
+      const tempPassword = surveyorImportService.generateTempPassword();
+      const passwordHash = await hashPassword(tempPassword);
+      await pool.query(
+        `UPDATE users SET password_hash = $2, force_password_change = true, updated_at = now() WHERE id = $1`,
+        [u.id, passwordHash]
+      );
+      credentials.push({ userId: u.id, name: u.name, email: u.email, mobile: u.phone, tempPassword });
+    }
+
+    // Plaintext passwords never reach audit_logs — only which accounts were reset.
+    await recordAudit(null, {
+      userId: req.user.id,
+      action: 'bulk_reset_password',
+      resourceType: 'users',
+      metadata: { resetCount: credentials.length, userIds: credentials.map((c) => c.userId) },
+    });
+
+    res.json({ resetCount: credentials.length, credentials });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Super Admin: create users/roles.
 router.post('/', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
   try {

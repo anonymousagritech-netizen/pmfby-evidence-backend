@@ -38,7 +38,11 @@ router.post('/login', async (req, res, next) => {
 });
 
 router.get('/me', authenticate, (req, res) => {
-  res.json({ user: req.user });
+  // Normalize to the same camelCase shape /login returns (req.user comes straight off
+  // a DB row, which is snake_case) — both the android-kotlin and admin-web clients key
+  // off `forcePasswordChange`, not `force_password_change`.
+  const { force_password_change: forcePasswordChange, role_key: roleKey, role_name: roleName, ...rest } = req.user;
+  res.json({ user: { ...rest, roleKey, roleName, forcePasswordChange } });
 });
 
 // Minimal self-service password change — the only mechanism for a bulk-imported

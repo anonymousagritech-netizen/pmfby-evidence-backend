@@ -68,8 +68,6 @@ describe('Bulk surveyor import: create, re-upload transitions, credentials, and 
     adminToken = tokenFor(admin, 'super_admin');
   });
 
-  afterAll(async () => { await closePool(); });
-
   test('first upload creates an Active surveyor with a synthetic email, a usable generated password, and force_password_change set', async () => {
     const result = await doImport(adminToken, [
       ['Palwal', 'Ramesh Kumar', 9000000001, 'Active'],
@@ -85,12 +83,42 @@ describe('Bulk surveyor import: create, re-upload transitions, credentials, and 
     expect(user.force_password_change).toBe(true);
     expect([...user.home_district_ids].sort()).toEqual(['Faridabad', 'Palwal']);
 
-    // The generated password is real and usable — NOT the shared seed password, and
-    // different accounts don't collide (we can at least prove it's a real bcrypt hash
-    // that isn't the empty/default seed hash by confirming an arbitrary wrong guess
-    // fails and the account truly requires *some* real secret to log in).
-    const wrongGuess = await verifyPassword('TestPass123!', user.password_hash); // shared seed password used elsewhere in tests
-    expect(wrongGuess).toBe(false);
+    // THE critical bug fix: the commit response must actually hand back the
+    // plaintext temp password for this newly-created account — otherwise nobody,
+    // not even the admin, can ever log the surveyor in.
+    expect(result.credentials).toHaveLength(1);
+    const cred = result.credentials[0];
+    expect(cred.mobile).toBe('9000000001');
+    expect(cred.email).toBe('9000000001@pmfby-evidence.local');
+    expect(cred.tempPassword).toBeTruthy();
+    expect(cred.tempPassword.length).toBeGreaterThanOrEqual(10);
+
+    // Prove it's not just a plausible-looking string — it must actually verify
+    // against the stored hash, and the account must actually be able to log in
+    // with it through the real /api/auth/login endpoint.
+    const hashMatches = await verifyPassword(cred.tempPassword, user.password_hash);
+    expect(hashMatches).toBe(true);
+
+    const loginRes = await request(app).post('/api/auth/login')
+      .send({ email: cred.email, password: cred.tempPassword });
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.user.forcePasswordChange).toBe(true);
+
+    // The plaintext password must never reach the audit trail.
+    const { rows: auditRows } = await pool.query("SELECT * FROM audit_logs WHERE action = 'bulk_import_surveyors' ORDER BY created_at DESC LIMIT 1");
+    const auditJson = JSON.stringify(auditRows[0].metadata);
+    expect(auditJson).not.toContain(cred.tempPassword);
+    expect(auditJson.toLowerCase()).not.toContain('temppassword');
+  });
+
+  test('a re-upload that only updates an already-existing surveyor does NOT return a credential for them (show-once-at-creation only)', async () => {
+    // 9000000001 already exists from the previous test — re-upload with a district
+    // change but the same Active status; this is an update, not a creation.
+    const result = await doImport(adminToken, [
+      ['Rohtak', 'Ramesh Kumar', 9000000001, 'Active'],
+    ]);
+    expect(result.summary.created).toBe(0);
+    expect(result.credentials).toHaveLength(0);
   });
 
   test('re-upload with status Inactive actually deactivates the existing account (not just a default)', async () => {
@@ -188,5 +216,56 @@ describe('Bulk surveyor import: create, re-upload transitions, credentials, and 
     expect(rows).toHaveLength(1);
     expect(rows[0].metadata.summary).toBeTruthy();
     expect(Array.isArray(rows[0].metadata.changeLog)).toBe(true);
+  });
+});
+
+describe('End-to-end: temp password -> forced change -> old password revoked', () => {
+  let adminToken;
+
+  beforeAll(async () => {
+    await resetDb();
+    await ensureRolesAndTemplates();
+    const admin = await createUser({ name: 'E2E Admin', email: 'e2e-admin@test.local', roleKey: 'super_admin' });
+    adminToken = tokenFor(admin, 'super_admin');
+  });
+
+  afterAll(async () => { await closePool(); });
+
+  test('full lifecycle: temp password logs in and forces a change; new password works; old temp password is rejected afterward', async () => {
+    const result = await doImport(adminToken, [
+      ['Palwal', 'E2E Surveyor', 9000000200, 'Active'],
+    ]);
+    const cred = result.credentials[0];
+    expect(cred).toBeTruthy();
+
+    // 1. Temp password logs in, and the response says a change is required.
+    const firstLogin = await request(app).post('/api/auth/login').send({ email: cred.email, password: cred.tempPassword });
+    expect(firstLogin.status).toBe(200);
+    expect(firstLogin.body.user.forcePasswordChange).toBe(true);
+    const surveyorToken = firstLogin.body.token;
+
+    // /me must report the same flag, camelCase, consistent with /login (both admin-web
+    // and the native app key off forcePasswordChange).
+    const meRes = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${surveyorToken}`);
+    expect(meRes.body.user.forcePasswordChange).toBe(true);
+
+    // 2. Change the password via the real endpoint both clients call.
+    const changeRes = await request(app).post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${surveyorToken}`)
+      .send({ currentPassword: cred.tempPassword, newPassword: 'MyRealPassword1!' });
+    expect(changeRes.status).toBe(200);
+
+    // 3. force_password_change is cleared — a fresh /me no longer demands a change.
+    const meAfter = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${surveyorToken}`);
+    expect(meAfter.body.user.forcePasswordChange).toBe(false);
+
+    // 4. The OLD temp password no longer works for a subsequent login.
+    const staleLogin = await request(app).post('/api/auth/login').send({ email: cred.email, password: cred.tempPassword });
+    expect(staleLogin.status).toBe(401);
+
+    // 5. The NEW password logs in fine, and no longer demands a change.
+    const newLogin = await request(app).post('/api/auth/login').send({ email: cred.email, password: 'MyRealPassword1!' });
+    expect(newLogin.status).toBe(200);
+    expect(newLogin.body.user.forcePasswordChange).toBe(false);
   });
 });
