@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { UserPlus, Users as UsersIcon, UploadCloud } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { UserPlus, Users as UsersIcon, UploadCloud, MapPin } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import DataGrid from '../components/DataGrid';
@@ -124,6 +125,77 @@ function BulkSurveyorImportCard({ onImported }) {
   );
 }
 
+// The district chip editor (chips + text input + Add button) is taller than a fixed
+// AG Grid row and was previously rendered inline in the cell — for a surveyor with
+// several districts that overflowed the row and visually bled into the row below it
+// (a real layout bug, not a style nitpick). Moved out of the grid entirely into a
+// small fixed-position popover (portaled to document.body, so the grid's cell overflow
+// clipping/row-height model never has to accommodate it) triggered by a compact button
+// in the cell — the grid only ever renders a one-line summary.
+function HomeDistrictsEditor({ user, districtDraft, setDistrictDraft, onAdd, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
+  const btnRef = useRef(null);
+
+  function openPopover() {
+    const rect = btnRef.current.getBoundingClientRect();
+    setCoords({ top: rect.bottom + 6, left: rect.left });
+    setOpen(true);
+  }
+
+  const districts = user.home_district_ids || [];
+
+  return (
+    <>
+      <button ref={btnRef} type="button" className="secondary" style={{ padding: '4px 10px', fontSize: 12.5 }} onClick={openPopover}>
+        <MapPin size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+        {districts.length > 0 ? `${districts.length} district${districts.length === 1 ? '' : 's'}` : 'None set'}
+      </button>
+
+      {open && coords && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 1000 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            className="panel"
+            style={{
+              position: 'fixed', top: coords.top, left: coords.left, zIndex: 1001,
+              width: 300, boxShadow: 'var(--shadow-lg)', margin: 0,
+            }}
+          >
+            <div className="panel-body" style={{ padding: 14 }}>
+              <strong style={{ fontSize: 13 }}>Home districts — {user.name}</strong>
+              <div className="chip-select" style={{ margin: '10px 0' }}>
+                {districts.length === 0 && <span className="help-text">none set</span>}
+                {districts.map((d) => (
+                  <span className="chip selected" key={d}>
+                    {d}
+                    <button type="button" onClick={() => onRemove(user, d)} title="Remove">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex-row" style={{ gap: 6 }}>
+                <input
+                  autoFocus
+                  placeholder="District ID"
+                  value={districtDraft[user.id] || ''}
+                  onChange={(e) => setDistrictDraft({ ...districtDraft, [user.id]: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onAdd(user); } }}
+                />
+                <button type="button" className="secondary" onClick={() => onAdd(user)}>Add</button>
+              </div>
+              <button type="button" className="primary" style={{ marginTop: 10, width: '100%' }} onClick={() => setOpen(false)}>Done</button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -229,7 +301,6 @@ export default function UsersPage() {
           account.
         </p>
         <DataGrid
-          rowHeight={76}
           searchKeys={['name', 'email', 'role_key']}
           columns={[
             { key: 'name', label: 'Name', sortable: true },
@@ -239,29 +310,16 @@ export default function UsersPage() {
             { key: 'scope', label: 'Scope', render: (u) => u.scope_district_id || u.scope_state_id || '-' },
             {
               key: 'home_district_ids',
-              label: 'Home Districts (Auto-Assign)',
+              label: 'Home Districts',
+              sortable: false,
               render: (u) => (u.role_key !== 'surveyor' ? <span className="help-text">n/a</span> : (
-                <div>
-                  <div className="chip-select" style={{ marginBottom: 6 }}>
-                    {(u.home_district_ids || []).length === 0 && <span className="help-text">none set</span>}
-                    {(u.home_district_ids || []).map((d) => (
-                      <span className="chip selected" key={d}>
-                        {d}
-                        <button type="button" onClick={() => removeHomeDistrict(u, d)} title="Remove">×</button>
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex-row" style={{ gap: 6 }}>
-                    <input
-                      style={{ width: 110 }}
-                      placeholder="District ID"
-                      value={districtDraft[u.id] || ''}
-                      onChange={(e) => setDistrictDraft({ ...districtDraft, [u.id]: e.target.value })}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addHomeDistrict(u); } }}
-                    />
-                    <button type="button" className="secondary" onClick={() => addHomeDistrict(u)}>Add</button>
-                  </div>
-                </div>
+                <HomeDistrictsEditor
+                  user={u}
+                  districtDraft={districtDraft}
+                  setDistrictDraft={setDistrictDraft}
+                  onAdd={addHomeDistrict}
+                  onRemove={removeHomeDistrict}
+                />
               )),
             },
             { key: 'is_active', label: 'Status', render: (u) => <StatusBadge status={u.is_active ? 'active' : 'deactivated'} /> },

@@ -64,18 +64,24 @@ h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 0; } h3 { font-size: 1
 
 a { color: var(--navy-light); text-decoration: none; }
 
-.app-shell { display: flex; min-height: 100vh; }
+.app-shell { display: flex; min-height: 100vh; align-items: flex-start; }
 
 .sidebar {
+  /* flex: 0 0 248px (not just width + flex-shrink) so no sibling content — e.g. a
+     wide AG Grid forcing .main to overflow — can ever compress the sidebar's flex
+     basis. min-width backs that up as a hard floor regardless of flex behavior. */
+  flex: 0 0 248px;
   width: 248px;
+  min-width: 248px;
+  max-width: 248px;
   background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
   color: #fff;
   padding: 20px 0;
-  flex-shrink: 0;
   position: sticky;
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  overflow-x: hidden;
   box-shadow: var(--shadow-lg);
 }
 .sidebar h1 {
@@ -245,6 +251,12 @@ button.secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .chip.selected { background: var(--navy-50); color: var(--navy); border-color: var(--navy-light); font-weight: 700; }
 .chip button { background: none; border: none; cursor: pointer; color: inherit; font-size: 12px; padding: 0; line-height: 1; }
+
+/* Defense-in-depth: a custom cell renderer that's taller than the row (e.g. a chip
+   list before it was moved into a popover) must never visually bleed into the row
+   below it — clip at the cell boundary instead of overlapping, even though AG Grid's
+   own default already does this for plain content. */
+.ag-cell { overflow: hidden; }
 
 .map-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 12.5px; }
 .map-legend .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
