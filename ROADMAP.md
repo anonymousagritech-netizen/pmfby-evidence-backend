@@ -288,3 +288,133 @@ all districts when that misses. The name-only fallback is a linear scan over the
 in-memory index, which is fine for the handful of villages in one auto-assign run but
 would not be an appropriate way to serve a whole-district bulk request — that path
 (`by-district`) looks up by name directly without the scan.
+
+## Real-data validation pass (Haryana PMFBY sample, `NEW DATA.xlsx`)
+
+A real production sample (Sheet1, 3192 rows) was run through the actual import
+pipeline end-to-end (not just synthetic test data) and found four real bugs, all now
+fixed and covered by `tests/integration/realDataImport.test.js` (built from the same
+real column shapes/values, not the original file itself — too large/environment-
+specific to commit as a fixture):
+
+1. **Wrong worksheet silently imported.** `parseWorkbookBuffer` used
+   `workbook.worksheets[0]`, assuming the first array entry is the real data sheet.
+   This real file has a near-empty "Sheet2" (216 rows) that ExcelJS orders BEFORE
+   "Sheet1" (3193 rows, the real data) in `worksheets` — `worksheets[0]` followed tab
+   display order, not sheet id or row count, so the wrong sheet was imported with zero
+   errors raised (a silent data-loss bug, not a crash). Fixed in
+   `importService.js`'s new `pickWorksheet()`: prefer a sheet literally named "Sheet1"
+   (case-insensitive), else fall back to whichever sheet has the most rows.
+2. **camelCase real headers vs. the spec's `Docket_ID2`-style names.** Mostly already
+   handled by `columnMapping.js`'s normalize-then-compare logic (strips
+   non-alphanumeric + lowercases, so `docketID` and `Docket_ID2` normalize to the same
+   string) — but `insuranceCompanyName` and `applicationSourceOrigin` fell through to
+   fuzzy-or-no-match because the existing aliases (`insurancecompany`,
+   `applicationsource`) were missing the real header's extra word. Added explicit
+   aliases for both; both are now `exact` matches.
+3. **GUID IDs.** `stateID`/`districtID`/`level4ID`-`level7ID` are GUIDs
+   (`5C77DA4F-...`), not small integers. Already correctly handled —
+   `STRING_ID_FIELDS` in `importService.js` was already keyed by the same field names
+   these columns map to, so they were never coerced through `Number()`. Verified (not
+   assumed) with a real-GUID round-trip test.
+4. **`intimationAssignDeadline`'s real value is a status STRING ("Active"), not a
+   date**, despite the column name and the original spec's assumption. Previously this
+   went straight into a `date`-typed Postgres column and threw, which the per-row
+   try/catch caught — but that meant the WHOLE row (farmer name, docket id, every other
+   field) got marked `errored` and silently dropped, for a problem in one unrelated
+   column. Fixed: `toDbValue()` now takes the destination column name, and for the
+   five actual date columns (`date_of_incidence`, `farmer_intimation_date`,
+   `sowing_date`, `survey_assigned_on`, `intimation_assign_deadline`), a value that
+   doesn't parse as a real date becomes `NULL` instead of reaching the query. The rest
+   of the row still imports correctly.
+
+**Critical algorithm fix — TAT basis.** The user confirmed directly: "TAT day is 10
+days from ASSIGNMENT." `autoAssignService.computePriority` (and the priority/P1-P2-P3
+split built on it) previously computed the deadline from `farmer_intimation_date`,
+which is wrong. Fixed to use `survey_assigned_on` as the basis in every caller:
+`routes/autoAssign.js`'s `loadCasesAndSurveyors` now selects `survey_assigned_on AS
+assigned_on` (and no longer requires `farmer_intimation_date IS NOT NULL` for a case to
+be eligible, since that field is no longer load-bearing for this calculation). For a
+case that has never been assigned (`survey_assigned_on IS NULL` — true for every
+case freshly imported, since the source Excel's own `ASSIGN` column, see below, is the
+not-yet-automated manual step), `runAutoAssignPure` falls back to treating **this run's
+`reportDate` as the assignment moment** — i.e. a never-assigned case starts counting
+TAT from the moment the admin actually runs auto-assign, not from some earlier
+undefined date. This was a judgment call the brief explicitly asked for: `survey_assigned_on`
+is authoritative when present (an existing agency assignment carried over from import),
+and "this run IS the assignment" when it's the case's first assignment. Covered by two
+new dedicated unit tests proving priority tracks `assignedOn` and completely ignores
+`intimationDate`, plus the integration test's cases, which deliberately set very
+different (irrelevant) intimation dates on each case to prove the point.
+
+**New fields captured, not previously in schema** (migration
+`1700000010000_import_fidelity_fixes.js`, `survey_cases` table): `case_latitude`/
+`case_longitude` (per-case GPS from the source system — e.g. farm/incident location;
+kept explicitly distinct from `call_events.geo_lat/geo_lon`, which is the surveyor's
+own live geotag captured at an actual contact attempt, never backfilled from import)
+and `source_is_farmer_present`/`source_villager_relation`/`source_villager_name`/
+`source_villager_mobile`.
+
+**Decision: villager/is-farmer-present fields do NOT auto-populate `call_events`'
+"Person Contacted" fields.** The brief asked to consider this. Chose not to, and stored
+them as `source_*` reference columns on `survey_cases` instead, for two reasons: (a)
+`call_events.person_contacted_*` is documented and built specifically to record what
+actually happened at a real contact attempt made through this app — conflating it with
+whatever the source system had on file at import time would make that field lie about
+provenance (a manager reading "person contacted: Suresh (Neighbor)" on a call record
+should be able to trust that's who the surveyor actually spoke to, not stale import
+data); (b) the source data for this is unreliable in practice — in the sample, 3190 of
+3192 rows have these fields entirely null, and `isFarmerPresent` is "No" even on rows
+with no witness name recorded, suggesting it's inconsistently filled upstream. The
+surveyor can still see the source values (surfaced as reference-only, not pre-filled
+into any outcome field) if a case-detail view is extended to show them — not yet wired
+into the mobile app UI, left as a follow-up.
+
+**Not mapped/captured this pass** (real columns with no current app field, left
+unmapped rather than guessed at): `level4Code`-`level7Code` (short numeric codes
+alongside the GUID IDs — genuinely different from `level*ID`, not conflated, just not
+stored anywhere yet since nothing currently reads them), and a large block of real
+survey-outcome-detail columns (`affectedAreaPercentage`, `cropLossPercentage`,
+`surveyCauseOfLoss`, `surveyCropCondition`, `harvestDate`, IC/Deputy-Director approval
+fields, etc.) that describe survey outcomes richer than this app's current
+`contact_status` state machine models. Capturing these properly is a real, separate
+schema-design pass (not a quick column-add) and was out of scope for a correctness-bug
+pass — flagged here rather than silently dropped.
+
+**Sanity-checked, no issue found:** `surveyStatus`'s real value ("Survey Agency
+Assigned") stores fine — `survey_status` is a free-text column with no enum constraint
+anywhere in the backend, so this and any other real status string round-trip correctly.
+
+**The `ASSIGN` column** is blank in the real source file — confirmed as the column the
+agency fills in manually today; auto-assign is meant to replace it, so nothing in the
+import path requires it to be populated. The Excel export of an auto-assign run (see
+below) produces its own `ASSIGN` column (holding the assigned surveyor's name) for
+exactly this reason — familiar to anyone used to the manual spreadsheet workflow.
+
+## Auto-Assign: Excel export + bulk cross-surveyor transfer
+
+**Excel download** (`POST /api/auto-assign/export`, Super Admin only, audited as
+`auto_assign_export`): takes the same params body as preview/commit (the algorithm is
+deterministic, so re-running it with identical params reproduces identical
+placements — this endpoint never writes anything) and streams back a generated
+`.xlsx` via `autoAssignExportService.js` (ExcelJS — already a dependency for the import
+side, no new package needed): an "Assigned Cases" sheet (one row per case: docket id,
+farmer name, district, village, priority, days remaining, TAT deadline, an `ASSIGN`
+column holding the surveyor's name, and their mobile), a "Surveyor Summary" sheet
+(name, mobile, district/village counts, total/P1/P2/P3, under-minimum flag), and an
+"Unassigned" sheet only when there are unassigned cases. A "Download Excel" button on
+the Auto-Assign admin-web page sits next to Preview/Commit.
+
+**Bulk cross-surveyor transfer** (`POST /api/assignments/bulk-transfer`, Super Admin
+only): moves a block of farmers' active assignment to one destination surveyor in a
+single transaction and a single audit log row (not N individual entries). Built by
+extracting the actual reassign step out of `assignFarmer` into `reassignFarmerTx(client,
+...)` so both the single-case path and `bulkReassignFarmers` share the exact same
+logic and the exact same emergency-incident safety gate — not a parallel
+reimplementation of it. A farmer blocked by that gate is skipped and reported back in
+`blocked` rather than aborting the whole batch (one stuck case shouldn't block
+rebalancing the rest). On the Auto-Assign page, each per-surveyor row in the breakdown
+table has a checkbox; selecting one or more and picking a destination surveyor from the
+dropdown runs the transfer via `assignedFarmerIdsBySurveyor`, a new field on the
+preview/commit response mapping each surveyor to the farmer IDs they were assigned in
+that run.

@@ -20,8 +20,8 @@ const FIELD_DEFS = [
   { field: 'Crop_Name', aliases: ['crop_name', 'cropname', 'crop'] },
   { field: 'Land_Survey_Number', aliases: ['land_survey_number', 'surveynumber', 'landsurveyno'] },
   { field: 'Land_Division_Number', aliases: ['land_division_number', 'divisionnumber'] },
-  { field: 'Insurance_Company', aliases: ['insurance_company', 'insurer'] },
-  { field: 'Application_Source', aliases: ['application_source', 'appsource'] },
+  { field: 'Insurance_Company', aliases: ['insurance_company', 'insurer', 'insurancecompanyname'] },
+  { field: 'Application_Source', aliases: ['application_source', 'appsource', 'applicationsourceorigin'] },
   { field: 'State_Name', aliases: ['state_name', 'state'] },
   { field: 'State_ID', aliases: ['state_id', 'stateid'] },
   { field: 'District_Name', aliases: ['district_name', 'district'] },
@@ -40,6 +40,19 @@ const FIELD_DEFS = [
   { field: 'Survey_Assigned_On', aliases: ['survey_assigned_on', 'assignedon'] },
   { field: 'Surveyor_Name', aliases: ['surveyor_name', 'surveyorname'] },
   { field: 'Surveyor_Mobile', aliases: ['surveyor_mobile', 'surveyormobile', 'surveyorphone'] },
+  // Case-level GPS from the source system (e.g. farm/incident location) — distinct
+  // from the surveyor's own geotag-on-visit (call_events.geo_lat/geo_lon), which is
+  // captured live by the app itself, not imported.
+  { field: 'Case_Latitude', aliases: ['latitude', 'case_latitude'] },
+  { field: 'Case_Longitude', aliases: ['longitude', 'case_longitude'] },
+  // Source-system witness/contact fields, captured at the time the case was created in
+  // the source system — see importService.js for why these are stored as a reference
+  // on survey_cases rather than auto-populating call_events' own person-contacted
+  // fields (which must reflect the surveyor's actual attempt, not stale import data).
+  { field: 'Source_Is_Farmer_Present', aliases: ['isfarmerpresent', 'is_farmer_present'] },
+  { field: 'Source_Villager_Relation', aliases: ['villagersrelation', 'villager_relation'] },
+  { field: 'Source_Villager_Name', aliases: ['villagersname', 'villager_name'] },
+  { field: 'Source_Villager_Mobile', aliases: ['villagersmobile', 'villager_mobile'] },
 ];
 
 function normalizeHeader(header) {

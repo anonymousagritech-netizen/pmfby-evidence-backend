@@ -30,10 +30,14 @@ describe('Auto-assign: RBAC + preview/commit', () => {
     // Give the surveyor eligibility in district D1.
     await pool.query('UPDATE users SET home_district_ids = $1 WHERE id = $2', [['D1'], surveyor.id]);
 
-    // 3 cases, 1 village, intimation date such that with tat=10, report=+9 days -> P1.
-    await createFarmerWithCase({ farmerName: 'F1', village: 'V1', villageId: 'V1', districtId: 'D1', intimationDate: '2026-01-01' });
-    await createFarmerWithCase({ farmerName: 'F2', village: 'V1', villageId: 'V1', districtId: 'D1', intimationDate: '2026-01-01' });
-    await createFarmerWithCase({ farmerName: 'F3', village: 'V2', villageId: 'V2', districtId: 'D1', intimationDate: '2026-01-01' });
+    // 3 cases, 1 village, survey_assigned_on such that with tat=10, report=Jan10 ->
+    // deadline Jan11 -> daysRemaining=1 -> P1. intimationDate is deliberately set to a
+    // very different, irrelevant date on each case to prove priority is driven by
+    // survey_assigned_on (the real TAT basis — "TAT day is 10 days from ASSIGNMENT"),
+    // never by farmer_intimation_date.
+    await createFarmerWithCase({ farmerName: 'F1', village: 'V1', villageId: 'V1', districtId: 'D1', intimationDate: '2020-01-01', assignedOn: '2026-01-01' });
+    await createFarmerWithCase({ farmerName: 'F2', village: 'V1', villageId: 'V1', districtId: 'D1', intimationDate: '2025-06-15', assignedOn: '2026-01-01' });
+    await createFarmerWithCase({ farmerName: 'F3', village: 'V2', villageId: 'V2', districtId: 'D1', intimationDate: '2024-03-20', assignedOn: '2026-01-01' });
   });
 
   afterAll(async () => { await closePool(); });

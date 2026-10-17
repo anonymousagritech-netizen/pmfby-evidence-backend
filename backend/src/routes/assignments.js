@@ -2,7 +2,7 @@ const express = require('express');
 const { pool } = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/rbac');
-const { assignFarmer, EmergencyReviewRequiredError } = require('../services/assignmentService');
+const { assignFarmer, bulkReassignFarmers, EmergencyReviewRequiredError } = require('../services/assignmentService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -27,6 +27,35 @@ router.post('/', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
     res.status(201).json({ assignment });
   } catch (err) {
     if (err instanceof EmergencyReviewRequiredError) return res.status(409).json({ error: err.message });
+    next(err);
+  }
+});
+
+// Bulk cross-surveyor transfer: move a BLOCK of farmers' active assignment to one
+// destination surveyor in one transaction/one audit entry — the common real workflow
+// of surveyor turnover, post-hoc workload rebalancing, or a surveyor going on leave
+// mid-cycle. Super Admin only. A farmer blocked by the emergency-incident gate is
+// skipped (reported in `blocked`), not treated as a failure of the whole batch.
+router.post('/bulk-transfer', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { farmerIds, toUserId } = req.body;
+    if (!Array.isArray(farmerIds) || farmerIds.length === 0) {
+      return res.status(400).json({ error: 'farmerIds (non-empty array) required' });
+    }
+    if (!toUserId) return res.status(400).json({ error: 'toUserId required' });
+
+    const { rows: userRows } = await pool.query(
+      `SELECT u.id, r.key AS role_key FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      [toUserId]
+    );
+    if (!userRows[0]) return res.status(400).json({ error: 'Destination user not found' });
+    if (userRows[0].role_key !== ROLES.SURVEYOR) {
+      return res.status(400).json({ error: 'Cases can only be transferred to a surveyor-role user' });
+    }
+
+    const result = await bulkReassignFarmers({ farmerIds, toUserId, assignedBy: req.user.id });
+    res.json(result);
+  } catch (err) {
     next(err);
   }
 });

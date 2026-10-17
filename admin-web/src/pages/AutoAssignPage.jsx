@@ -75,6 +75,16 @@ export default function AutoAssignPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mapView, setMapView] = useState('polygon'); // 'polygon' | 'point'
+  const [surveyors, setSurveyors] = useState([]);
+  const [selectedSurveyors, setSelectedSurveyors] = useState(new Set()); // surveyorIds whose cases are selected for transfer
+  const [transferTarget, setTransferTarget] = useState('');
+  const [transferMessage, setTransferMessage] = useState(null);
+  const [transferring, setTransferring] = useState(false);
+
+  useEffect(() => {
+    api.get('/users').then((res) => setSurveyors(res.data.users.filter((u) => u.role_key === 'surveyor'))).catch(() => {});
+  }, []);
+  const surveyorName = (id) => surveyors.find((s) => s.id === id)?.name || id;
 
   function payload() {
     return {
@@ -97,6 +107,44 @@ export default function AutoAssignPage() {
       setError(err.response?.data?.error || `Auto-assign ${mode} failed`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function downloadExcel() {
+    setError(null);
+    try {
+      const res = await api.post('/auto-assign/export', payload(), { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `auto-assign-${reportDate}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Excel export failed');
+    }
+  }
+
+  function toggleSurveyorSelection(surveyorId) {
+    const next = new Set(selectedSurveyors);
+    if (next.has(surveyorId)) next.delete(surveyorId);
+    else next.add(surveyorId);
+    setSelectedSurveyors(next);
+  }
+
+  async function handleBulkTransfer() {
+    if (!transferTarget || selectedSurveyors.size === 0) return;
+    setTransferring(true);
+    setTransferMessage(null);
+    try {
+      const farmerIds = [...selectedSurveyors].flatMap((sid) => result?.assignedFarmerIdsBySurveyor?.[sid] || []);
+      const res = await api.post('/assignments/bulk-transfer', { farmerIds, toUserId: transferTarget });
+      setTransferMessage(`Transferred ${res.data.transferred.length} case(s)${res.data.blocked.length ? `, ${res.data.blocked.length} blocked (unresolved emergency incident)` : ''}.`);
+      setSelectedSurveyors(new Set());
+    } catch (err) {
+      setTransferMessage(err.response?.data?.error || 'Bulk transfer failed');
+    } finally {
+      setTransferring(false);
     }
   }
 
@@ -156,6 +204,7 @@ export default function AutoAssignPage() {
             onClick={() => run('commit')}>
             Commit Assignment
           </button>
+          <button type="button" className="secondary" disabled={loading} onClick={downloadExcel}>Download Excel</button>
         </div>
         {error && <div className="error-text">{error}</div>}
       </div>
@@ -196,11 +245,26 @@ export default function AutoAssignPage() {
 
           <div className="card">
             <h3>{result.mode === 'commit' ? 'Committed' : 'Preview'}: per-surveyor breakdown</h3>
+            <p className="help-text">
+              Select one or more surveyors' rows, then use "Transfer selected to..."
+              below to move all of their cases from this run to a different surveyor in
+              one bulk operation — useful for post-hoc rebalancing, surveyor turnover,
+              or leave coverage.
+            </p>
             <DataTable
               searchKeys={['surveyorId']}
               columns={[
+                {
+                  key: 'select', label: '', render: (s) => (
+                    <input
+                      type="checkbox"
+                      checked={selectedSurveyors.has(s.surveyorId)}
+                      onChange={() => toggleSurveyorSelection(s.surveyorId)}
+                    />
+                  ),
+                },
                 { key: 'surveyorId', label: 'Surveyor', sortable: true, render: (s) => (
-                  <span><span className="legend-dot" style={{ background: colorFor(s.surveyorId) }} />{s.surveyorId}</span>
+                  <span><span className="legend-dot" style={{ background: colorFor(s.surveyorId) }} />{surveyorName(s.surveyorId)}</span>
                 ) },
                 { key: 'districtCount', label: 'Districts', sortable: true },
                 { key: 'villageCount', label: 'Villages', sortable: true },
@@ -213,6 +277,20 @@ export default function AutoAssignPage() {
               rows={result.perSurveyor || []}
               emptyMessage="No surveyors matched."
             />
+            <div className="flex-row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+              <span className="help-text">{selectedSurveyors.size} surveyor(s) selected</span>
+              <select value={transferTarget} onChange={(e) => setTransferTarget(e.target.value)} style={{ width: 220 }}>
+                <option value="">Transfer selected to...</option>
+                {surveyors.filter((s) => !selectedSurveyors.has(s.id)).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <button type="button" className="primary" disabled={transferring || selectedSurveyors.size === 0 || !transferTarget}
+                onClick={handleBulkTransfer}>
+                Transfer
+              </button>
+            </div>
+            {transferMessage && <div className="help-text" style={{ marginTop: 6 }}>{transferMessage}</div>}
           </div>
 
           <div className="card">
@@ -265,7 +343,7 @@ export default function AutoAssignPage() {
                       >
                         <Popup>
                           <strong>{p.villageName}</strong><br />
-                          Surveyor: {p.surveyorId}<br />
+                          Surveyor: {surveyorName(p.surveyorId)}<br />
                           Cases: {p.caseCount}
                         </Popup>
                       </Polygon>
@@ -279,7 +357,7 @@ export default function AutoAssignPage() {
                       >
                         <Popup>
                           <strong>{m.villageName}</strong><br />
-                          Surveyor: {m.surveyorId}<br />
+                          Surveyor: {surveyorName(m.surveyorId)}<br />
                           Cases: {m.caseCount}
                         </Popup>
                       </CircleMarker>
@@ -288,7 +366,7 @@ export default function AutoAssignPage() {
                 </div>
                 <div className="map-legend">
                   {surveyorIds.map((id) => (
-                    <span key={id}><span className="legend-dot" style={{ background: colorFor(id) }} />{id}</span>
+                    <span key={id}><span className="legend-dot" style={{ background: colorFor(id) }} />{surveyorName(id)}</span>
                   ))}
                 </div>
               </>

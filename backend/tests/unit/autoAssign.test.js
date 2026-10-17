@@ -113,11 +113,43 @@ describe('autoAssignService.findFallbackVillages', () => {
   });
 });
 
+describe('autoAssignService: TAT basis is ASSIGNMENT date, not intimation date (bug fix)', () => {
+  test('priority is driven by assignedOn, completely ignoring any intimationDate field on the case', () => {
+    const surveyorsByDistrict = new Map([['D1', ['S1']]]);
+    // Same assignedOn, wildly different (irrelevant) intimationDate -> same priority.
+    const caseEarlyIntimation = { id: 'a', districtId: 'D1', villageId: 'V1', villageName: 'V1', assignedOn: '2026-01-01', intimationDate: '2025-01-01' };
+    const caseLateIntimation = { id: 'b', districtId: 'D1', villageId: 'V2', villageName: 'V2', assignedOn: '2026-01-01', intimationDate: '2026-06-01' };
+    const result = runAutoAssignPure({
+      cases: [caseEarlyIntimation, caseLateIntimation], surveyorsByDistrict,
+      reportDate: '2026-01-06', tatDays: 10, minCases: 1, p1CutoffDays: 5, p2CutoffDays: 7,
+    });
+    const s1 = result.perSurveyor.find((s) => s.surveyorId === 'S1');
+    // deadline = assignedOn(Jan1) + 10 = Jan11; report Jan6 -> daysRemaining=5 -> P1 for both.
+    expect(s1.p1).toBe(2);
+    expect(s1.p2).toBe(0);
+    expect(s1.p3).toBe(0);
+  });
+
+  test('a case with no assignedOn yet treats THIS run as the assignment moment (falls back to reportDate)', () => {
+    const surveyorsByDistrict = new Map([['D1', ['S1']]]);
+    const neverAssigned = { id: 'c', districtId: 'D1', villageId: 'V1', villageName: 'V1', assignedOn: null };
+    const result = runAutoAssignPure({
+      cases: [neverAssigned], surveyorsByDistrict,
+      reportDate: '2026-01-06', tatDays: 10, minCases: 1, p1CutoffDays: 5, p2CutoffDays: 7,
+    });
+    const s1 = result.perSurveyor.find((s) => s.surveyorId === 'S1');
+    // assignedOn falls back to reportDate itself -> deadline = Jan6+10 = Jan16; report
+    // Jan6 -> daysRemaining=10 -> P3 (freshly assigned cases start at full TAT runway).
+    expect(s1.p3).toBe(1);
+    expect(s1.p1).toBe(0);
+  });
+});
+
 describe('autoAssignService.runAutoAssignPure (end to end with synthetic data)', () => {
   test('flags surveyors under the minimum caseload', () => {
     const cases = [];
     for (let i = 0; i < 5; i++) {
-      cases.push({ id: `c${i}`, districtId: 'D1', villageId: 'V1', villageName: 'V1', intimationDate: '2026-01-01' });
+      cases.push({ id: `c${i}`, districtId: 'D1', villageId: 'V1', villageName: 'V1', assignedOn: '2026-01-01' });
     }
     const surveyorsByDistrict = new Map([['D1', ['S1']]]);
     const result = runAutoAssignPure({
@@ -129,9 +161,9 @@ describe('autoAssignService.runAutoAssignPure (end to end with synthetic data)',
 
   test('computes P1/P2/P3 split per surveyor', () => {
     const cases = [
-      { id: 'c1', districtId: 'D1', villageId: 'V1', villageName: 'V1', intimationDate: '2026-01-01' }, // deadline Jan11, report Jan10 -> 1 day -> P1
-      { id: 'c2', districtId: 'D1', villageId: 'V1', villageName: 'V1', intimationDate: '2026-01-01' },
-      { id: 'c3', districtId: 'D1', villageId: 'V2', villageName: 'V2', intimationDate: '2025-12-01' }, // far future-passed deadline -> P3
+      { id: 'c1', districtId: 'D1', villageId: 'V1', villageName: 'V1', assignedOn: '2026-01-01' }, // deadline Jan11, report Jan10 -> 1 day -> P1
+      { id: 'c2', districtId: 'D1', villageId: 'V1', villageName: 'V1', assignedOn: '2026-01-01' },
+      { id: 'c3', districtId: 'D1', villageId: 'V2', villageName: 'V2', assignedOn: '2025-12-01' }, // far-passed deadline -> P3
     ];
     const surveyorsByDistrict = new Map([['D1', ['S1']]]);
     const result = runAutoAssignPure({

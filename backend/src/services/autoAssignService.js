@@ -2,7 +2,15 @@
 // with synthetic data) plus a thin DB-facing wrapper (runAutoAssign) used by the route.
 //
 // Rules (per spec):
-//  - days_remaining = (farmer_intimation_date + tatDays) - reportDate
+//  - days_remaining = (assigned_on + tatDays) - reportDate. **Confirmed against real
+//    production usage**: "TAT day is 10 days from ASSIGNMENT", not from intimation.
+//    assigned_on is survey_cases.survey_assigned_on for a case that already has one
+//    (an existing agency assignment from the imported source data); for a case with no
+//    assigned_on yet (never assigned), the moment this auto-assign run executes
+//    (reportDate) IS the assignment, so assigned_on falls back to reportDate — see
+//    routes/autoAssign.js's loadCasesAndSurveyors, which does this COALESCE. An earlier
+//    version of this function used farmer_intimation_date, which was wrong; fixed after
+//    the user explicitly clarified the TAT basis.
 //  - priority: P1 if days_remaining <= p1CutoffDays, P2 if <= p2CutoffDays, else P3
 //  - group cases by district, then by village within district; ONE village = ONE
 //    surveyor, never split
@@ -19,18 +27,18 @@ function daysBetween(a, b) {
   return Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
 }
 
-function computePriority(intimationDate, tatDays, reportDate, p1CutoffDays, p2CutoffDays) {
-  const deadline = new Date(intimationDate);
+function computePriority(assignedOnDate, tatDays, reportDate, p1CutoffDays, p2CutoffDays) {
+  const deadline = new Date(assignedOnDate);
   deadline.setDate(deadline.getDate() + tatDays);
   const daysRemaining = daysBetween(reportDate, deadline);
   let priority;
   if (daysRemaining <= p1CutoffDays) priority = 'P1';
   else if (daysRemaining <= p2CutoffDays) priority = 'P2';
   else priority = 'P3';
-  return { daysRemaining, priority };
+  return { daysRemaining, priority, deadline };
 }
 
-// cases: array of { id, districtId, villageId, villageName, intimationDate, manualOverride, manualSurveyorId }
+// cases: array of { id, districtId, villageId, villageName, assignedOn, manualOverride, manualSurveyorId }
 // surveyorsByDistrict: Map<districtId, array of surveyorId>
 // Returns { placements: Map<caseId, surveyorId>, perSurveyor: Map<surveyorId, {cases:[]}>, unassignedCases: [] }
 function assignVillagesToSurveyors(cases, surveyorsByDistrict) {
@@ -143,10 +151,16 @@ function findFallbackVillages(originLat, originLon, villagePool, neededCaseCount
 // Full pipeline over plain-object cases/surveyors (no DB). Used directly by unit tests
 // and by the DB-facing wrapper below after it has loaded rows from Postgres.
 function runAutoAssignPure({ cases, surveyorsByDistrict, reportDate, tatDays, minCases = 40, p1CutoffDays = 5, p2CutoffDays = 7 }) {
-  const withPriority = cases.map((c) => ({
-    ...c,
-    ...computePriority(new Date(c.intimationDate), tatDays, new Date(reportDate), p1CutoffDays, p2CutoffDays),
-  }));
+  const withPriority = cases.map((c) => {
+    // A case with no assigned_on yet (never assigned by anyone) is, by definition,
+    // assigned AT this run — so TAT counts from reportDate for it, not from some
+    // earlier/undefined date. See the module-level comment above.
+    const assignedOnDate = c.assignedOn ? new Date(c.assignedOn) : new Date(reportDate);
+    return {
+      ...c,
+      ...computePriority(assignedOnDate, tatDays, new Date(reportDate), p1CutoffDays, p2CutoffDays),
+    };
+  });
   const { placements, perSurveyor, unassignedCases } = assignVillagesToSurveyors(withPriority, surveyorsByDistrict);
 
   const perSurveyorSummary = [];
@@ -162,6 +176,10 @@ function runAutoAssignPure({ cases, surveyorsByDistrict, reportDate, tatDays, mi
     perSurveyor: perSurveyorSummary,
     placements, // Map<caseId, surveyorId> — used by commit mode to write farmer_assignments
     underMinimumSurveyors: perSurveyorSummary.filter((s) => s.underMinimum).map((s) => s.surveyorId),
+    // Every input case plus its computed priority/daysRemaining/deadline — the detail
+    // row set the Excel export (and anything else wanting per-case detail) is built
+    // from, so that logic isn't recomputing the priority math a second time.
+    casesWithPriority: withPriority,
   };
 }
 

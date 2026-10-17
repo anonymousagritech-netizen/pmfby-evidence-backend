@@ -61,10 +61,24 @@ function cellToValue(cell, field) {
   return raw;
 }
 
+// Picks the worksheet to import. Real production files (e.g. the Haryana sample used
+// to validate this pipeline) can have multiple sheets where `worksheets[0]` is NOT the
+// real data — ExcelJS's `worksheets` array follows tab display order, not sheet id or
+// row count, and a workbook can have a near-empty "Sheet2" displayed before "Sheet1".
+// Blindly importing worksheets[0] on that file silently imported the wrong 216-row
+// sheet instead of the real 3193-row one. Prefer a sheet literally named "Sheet1"
+// (case-insensitive, the spec's documented convention); otherwise fall back to the
+// worksheet with the most data rows, which is a safer default than tab order.
+function pickWorksheet(workbook) {
+  const named = workbook.worksheets.find((s) => String(s.name || '').trim().toLowerCase() === 'sheet1');
+  if (named) return named;
+  return workbook.worksheets.reduce((best, s) => (!best || s.rowCount > best.rowCount ? s : best), null);
+}
+
 async function parseWorkbookBuffer(buffer) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
-  const sheet = workbook.worksheets[0];
+  const sheet = pickWorksheet(workbook);
   if (!sheet) throw new Error('No worksheet found in uploaded file');
 
   const headerRow = sheet.getRow(1);
@@ -163,17 +177,44 @@ const CASE_COLUMNS = [
   ['intimation_assign_deadline', 'Intimation_Assign_Deadline'],
   ['survey_agency_name', 'Survey_Agency_Name'], ['survey_assigned_on', 'Survey_Assigned_On'],
   ['surveyor_name', 'Surveyor_Name'], ['surveyor_mobile', 'Surveyor_Mobile'],
+  ['case_latitude', 'Case_Latitude'], ['case_longitude', 'Case_Longitude'],
+  ['source_is_farmer_present', 'Source_Is_Farmer_Present'],
+  ['source_villager_relation', 'Source_Villager_Relation'],
+  ['source_villager_name', 'Source_Villager_Name'],
+  ['source_villager_mobile', 'Source_Villager_Mobile'],
 ];
 
-function toDbValue(value) {
+// DB columns typed `date`/`timestamptz` — a value that doesn't parse as a real date
+// must become NULL rather than be passed through to the query, or the whole row's
+// INSERT/UPDATE throws and the row gets marked errored for an unrelated reason. Found
+// on real data: intimation_assign_deadline is a *status string* ("Active") in the
+// Haryana sample, not a date, despite its name and the original spec's assumption that
+// it was always a date column.
+const DATE_COLUMNS = new Set([
+  'date_of_incidence', 'farmer_intimation_date', 'sowing_date',
+  'survey_assigned_on', 'intimation_assign_deadline',
+]);
+
+function toDbValue(value, columnName) {
   if (value === undefined || value === null || value === '') return null;
-  if (value instanceof Date) return value;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value;
+  }
+  if (DATE_COLUMNS.has(columnName)) {
+    // Excel/ExcelJS sometimes hands back a date as a string (or, as seen on real data,
+    // a non-date status string like "Active") rather than a Date object. Only accept
+    // it if it actually parses to a real date; otherwise drop it to NULL rather than
+    // let an invalid-date string reach a `date`-typed Postgres column.
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
   return value;
 }
 
 async function upsertCase(client, farmerId, fields, importRowRef) {
-  const docketId2 = toDbValue(fields.Docket_ID2);
-  const applicationNo = toDbValue(fields.Application_No);
+  const docketId2 = toDbValue(fields.Docket_ID2, 'docket_id2');
+  const applicationNo = toDbValue(fields.Application_No, 'application_no');
 
   let existing = null;
   if (docketId2 && applicationNo) {
@@ -185,7 +226,7 @@ async function upsertCase(client, farmerId, fields, importRowRef) {
     existing = found.rows[0] || null;
   }
 
-  const values = CASE_COLUMNS.map(([, srcField]) => toDbValue(fields[srcField]));
+  const values = CASE_COLUMNS.map(([col, srcField]) => toDbValue(fields[srcField], col));
 
   if (!existing) {
     const columnNames = CASE_COLUMNS.map(([col]) => col);
@@ -203,7 +244,7 @@ async function upsertCase(client, farmerId, fields, importRowRef) {
   const params = [existing.id];
   let paramIndex = 2;
   for (const [col, srcField] of CASE_COLUMNS) {
-    const newValue = toDbValue(fields[srcField]);
+    const newValue = toDbValue(fields[srcField], col);
     const oldValue = existing[col];
     const oldComparable = oldValue instanceof Date ? oldValue.toISOString().slice(0, 10) : oldValue;
     const newComparable = newValue instanceof Date ? newValue.toISOString().slice(0, 10) : newValue;

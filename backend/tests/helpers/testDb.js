@@ -44,7 +44,7 @@ async function createUser({ name, email, roleKey, scopeStateId, scopeDistrictId 
 
 async function createFarmerWithCase({ farmerName = 'Test Farmer', village = 'TestVillage', villageId = 'V1',
   stateId = 'HR', districtId = 'HR-01', docketId2 = `D-${Date.now()}-${Math.random()}`, applicationNo = `A-${Date.now()}`,
-  intimationDate = null } = {}) {
+  intimationDate = null, assignedOn = null } = {}) {
   const { rows: farmerRows } = await pool.query(
     `INSERT INTO farmer_records (farmer_name, village_name, village_id, district_id, state_id, dedupe_key)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -52,9 +52,9 @@ async function createFarmerWithCase({ farmerName = 'Test Farmer', village = 'Tes
   );
   const farmer = farmerRows[0];
   const { rows: caseRows } = await pool.query(
-    `INSERT INTO survey_cases (farmer_id, docket_id2, application_no, state_id, district_id, level7_name, level7_id, survey_status, farmer_intimation_date)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'ASSIGNED',$8) RETURNING *`,
-    [farmer.id, docketId2, applicationNo, stateId, districtId, village, villageId, intimationDate]
+    `INSERT INTO survey_cases (farmer_id, docket_id2, application_no, state_id, district_id, level7_name, level7_id, survey_status, farmer_intimation_date, survey_assigned_on)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'ASSIGNED',$8,$9) RETURNING *`,
+    [farmer.id, docketId2, applicationNo, stateId, districtId, village, villageId, intimationDate, assignedOn]
   );
   return { farmer, surveyCase: caseRows[0] };
 }

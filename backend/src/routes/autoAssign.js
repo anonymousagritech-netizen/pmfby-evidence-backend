@@ -6,6 +6,7 @@ const { recordAudit } = require('../services/auditLog');
 const { runAutoAssignPure } = require('../services/autoAssignService');
 const villageLookup = require('../services/villageLookupService');
 const boundaryLookup = require('../services/boundaryLookupService');
+const { buildAutoAssignWorkbook } = require('../services/autoAssignExportService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -13,24 +14,34 @@ router.use(authenticate);
 // Pulls active, non-manually-overridden cases for the given district(s) plus each
 // eligible surveyor's home districts, in the shape autoAssignService expects.
 async function loadCasesAndSurveyors(districtIds) {
+  // TAT counts from ASSIGNMENT, not intimation (confirmed against real production
+  // usage — see autoAssignService.js's module comment): survey_assigned_on is the
+  // basis, not farmer_intimation_date. A case therefore no longer needs
+  // farmer_intimation_date to be eligible for auto-assign (only contact_status
+  // matters) — survey_assigned_on may itself be NULL for a never-assigned case, which
+  // autoAssignService.runAutoAssignPure treats as "this run IS the assignment".
   const { rows: caseRows } = await pool.query(
-    `SELECT sc.id, sc.district_id, sc.level7_id AS village_id, sc.level7_name AS village_name,
-            sc.farmer_intimation_date AS intimation_date, sc.farmer_id,
+    `SELECT sc.id, sc.district_id, sc.district_name, sc.level7_id AS village_id, sc.level7_name AS village_name,
+            sc.survey_assigned_on AS assigned_on, sc.farmer_id, sc.docket_id2, fr.farmer_name,
             fa.user_id AS manual_surveyor_id, fa.manual_override
      FROM survey_cases sc
+     JOIN farmer_records fr ON fr.id = sc.farmer_id
      LEFT JOIN farmer_assignments fa ON fa.farmer_id = sc.farmer_id AND fa.active = true
      WHERE sc.deleted_at IS NULL
        AND sc.district_id = ANY($1)
-       AND sc.farmer_intimation_date IS NOT NULL
        AND sc.contact_status NOT IN ('completed', 'denied')`,
     [districtIds]
   );
   const cases = caseRows.map((r) => ({
     id: r.id,
     districtId: r.district_id,
+    districtName: r.district_name,
     villageId: r.village_id,
     villageName: r.village_name,
-    intimationDate: r.intimation_date,
+    assignedOn: r.assigned_on,
+    farmerId: r.farmer_id,
+    farmerName: r.farmer_name,
+    docketId2: r.docket_id2,
     manualOverride: !!r.manual_override,
     manualSurveyorId: r.manual_surveyor_id,
   }));
@@ -97,6 +108,23 @@ async function buildVillageMarkers(cases, placements) {
   return markers;
 }
 
+// surveyorId -> array of farmerIds assigned in this run. Used by the admin-web page's
+// bulk-transfer UI ("select all of surveyor X's cases from this run, move them to
+// surveyor Y") — bulk transfer operates on farmerId (same unit assignFarmer/
+// farmer_assignments already use), not caseId.
+function buildAssignedFarmerIdsBySurveyor(cases, placements) {
+  const bySurveyor = new Map();
+  for (const c of cases) {
+    const surveyorId = placements.get(c.id);
+    if (!surveyorId) continue;
+    if (!bySurveyor.has(surveyorId)) bySurveyor.set(surveyorId, new Set());
+    bySurveyor.get(surveyorId).add(c.farmerId);
+  }
+  const out = {};
+  for (const [surveyorId, farmerIdSet] of bySurveyor.entries()) out[surveyorId] = [...farmerIdSet];
+  return out;
+}
+
 // Same village set as buildVillageMarkers, but returns full simplified polygon
 // geometry instead of a single centroid point — only for the villages in this run, per
 // the brief ("don't make a user's browser download all-India boundaries to see one
@@ -146,7 +174,11 @@ router.post('/preview', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =
     });
     const villageMarkers = await buildVillageMarkers(cases, result.placements);
     const villagePolygons = await buildVillagePolygons(cases, result.placements);
-    res.json({ runId: rows[0].id, createdAt: rows[0].created_at, ...summary, unassignedCaseIds: result.unassignedCaseIds, villageMarkers, villagePolygons });
+    const assignedFarmerIdsBySurveyor = buildAssignedFarmerIdsBySurveyor(cases, result.placements);
+    res.json({
+      runId: rows[0].id, createdAt: rows[0].created_at, ...summary,
+      unassignedCaseIds: result.unassignedCaseIds, villageMarkers, villagePolygons, assignedFarmerIdsBySurveyor,
+    });
   } catch (e) { next(e); }
 });
 
@@ -159,6 +191,7 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
     const { result, params, cases } = await computeRun(req);
     const villageMarkers = await buildVillageMarkers(cases, result.placements);
     const villagePolygons = await buildVillagePolygons(cases, result.placements);
+    const assignedFarmerIdsBySurveyor = buildAssignedFarmerIdsBySurveyor(cases, result.placements);
 
     const response = await withTransaction(async (client) => {
       // placements: Map<caseId, surveyorId> keyed by survey_case id; resolve to farmer_id.
@@ -199,7 +232,42 @@ router.post('/commit', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) =>
       });
       return { runId: rows[0].id, createdAt: rows[0].created_at, ...summary };
     });
-    res.json({ ...response, villageMarkers, villagePolygons });
+    res.json({ ...response, villageMarkers, villagePolygons, assignedFarmerIdsBySurveyor });
+  } catch (e) { next(e); }
+});
+
+// Excel download of a run's result — takes the SAME params body as preview/commit
+// (the algorithm is deterministic, so re-running it with identical params reproduces
+// identical placements; this endpoint never writes anything) and streams back a
+// generated .xlsx with an Assigned Cases sheet, a Surveyor Summary sheet, and an
+// Unassigned sheet when applicable. Super Admin only, audited.
+router.post('/export', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const err = validateParams(req.body);
+    if (err) return res.status(400).json({ error: err });
+    const { result, params } = await computeRun(req);
+
+    const surveyorIds = result.perSurveyor.map((s) => s.surveyorId);
+    const { rows: surveyorRows } = await pool.query(
+      'SELECT id, name, phone FROM users WHERE id = ANY($1)', [surveyorIds]
+    );
+    const surveyorContacts = new Map(surveyorRows.map((u) => [u.id, { name: u.name, mobile: u.phone || '' }]));
+
+    const buffer = await buildAutoAssignWorkbook({
+      casesWithPriority: result.casesWithPriority,
+      placements: result.placements,
+      perSurveyor: result.perSurveyor,
+      unassignedCaseIds: result.unassignedCaseIds,
+      surveyorContacts,
+    });
+
+    await recordAudit(null, {
+      userId: req.user.id, action: 'auto_assign_export', resourceType: 'assignment_runs', metadata: params,
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="auto-assign-${params.reportDate}.xlsx"`);
+    res.send(buffer);
   } catch (e) { next(e); }
 });
 
