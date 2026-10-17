@@ -11,6 +11,10 @@ const FIELD_DEFS = [
   { field: 'Scheme_Name', aliases: ['scheme_name', 'scheme'] },
   { field: 'Application_No', aliases: ['application_no', 'applicationno', 'appno'] },
   { field: 'Farmer_Name', aliases: ['farmer_name', 'farmername', 'name_of_farmer'] },
+  // Farmer's own contact number. Deliberately NO bare 'mobile'/'phone' alias and no
+  // surveyor/villager aliases: mapping Surveyor_Mobile or Villagers_Mobile here would be
+  // the data-integrity bug described at the top of this file.
+  { field: 'Farmer_Mobile', aliases: ['farmer_mobile', 'farmermobile', 'farmerphone', 'farmercontact', 'farmerphoneno', 'farmermobileno'] },
   { field: 'Type_Of_Incidence', aliases: ['type_of_incidence', 'incidencetype'] },
   { field: 'Date_Of_Incidence', aliases: ['date_of_incidence', 'incidencedate'] },
   { field: 'Crop_Status_At_Incidence', aliases: ['crop_status_at_incidence', 'cropstatus'] },
