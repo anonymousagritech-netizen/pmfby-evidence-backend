@@ -19,6 +19,7 @@ export default function Layout({ children }) {
           <NavLink to="/import">Excel Import</NavLink>
           <NavLink to="/farmers">Farmers &amp; Cases</NavLink>
           <NavLink to="/assignments">Assignments</NavLink>
+          <NavLink to="/users">Users</NavLink>
           <NavLink to="/templates">Message Templates</NavLink>
           <NavLink to="/evidence">Evidence Monitoring</NavLink>
           <NavLink to="/zips">ZIP Archives</NavLink>

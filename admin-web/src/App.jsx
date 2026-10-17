@@ -4,6 +4,7 @@ import DashboardPage from './pages/DashboardPage';
 import ImportPage from './pages/ImportPage';
 import FarmersPage from './pages/FarmersPage';
 import AssignmentsPage from './pages/AssignmentsPage';
+import UsersPage from './pages/UsersPage';
 import TemplatesPage from './pages/TemplatesPage';
 import EvidencePage from './pages/EvidencePage';
 import ZipArchivesPage from './pages/ZipArchivesPage';
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/import" element={<Protected><ImportPage /></Protected>} />
       <Route path="/farmers" element={<Protected><FarmersPage /></Protected>} />
       <Route path="/assignments" element={<Protected><AssignmentsPage /></Protected>} />
+      <Route path="/users" element={<Protected><UsersPage /></Protected>} />
       <Route path="/templates" element={<Protected><TemplatesPage /></Protected>} />
       <Route path="/evidence" element={<Protected><EvidencePage /></Protected>} />
       <Route path="/zips" element={<Protected><ZipArchivesPage /></Protected>} />
