@@ -24,6 +24,14 @@ router.post('/', upload.single('file'), async (req, res, next) => {
       return res.status(400).json({ error: 'consentAcknowledged must be true for a recorded voice note' });
     }
 
+    // voice_template_id is an integer column: parse defensively so a value like "1.0" (or junk)
+    // can never reach Postgres as a type error and surface as a 500.
+    let templateIdNum = null;
+    if (voiceTemplateId !== undefined && voiceTemplateId !== null && voiceTemplateId !== '') {
+      templateIdNum = Number.parseInt(String(voiceTemplateId), 10);
+      if (Number.isNaN(templateIdNum)) return res.status(400).json({ error: 'voiceTemplateId must be a number' });
+    }
+
     const caseRow = await getCaseIfSurveyorAssigned(caseId, req.user.id);
     if (!caseRow) return res.status(403).json({ error: 'Farmer is not currently assigned to you' });
 
@@ -41,7 +49,7 @@ router.post('/', upload.single('file'), async (req, res, next) => {
          checksum_sha256, duration_seconds, consent_acknowledged, voice_template_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [callEventId || null, caseId, req.user.id, kind || 'voice_note', fileKey, checksum,
-        durationSeconds || null, kind !== 'voice_message_playback' ? true : false, voiceTemplateId || null]
+        durationSeconds || null, kind !== 'voice_message_playback' ? true : false, templateIdNum]
     );
     res.status(201).json({ recording: rows[0] });
   } catch (err) {
