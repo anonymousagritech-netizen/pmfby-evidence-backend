@@ -51,13 +51,17 @@
 body {
   margin: 0;
   font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background: var(--neutral-50);
+  background: #f0f4ff;
   background-image:
-    radial-gradient(circle at 0% 0%, rgba(15, 42, 74, 0.035), transparent 40%),
-    radial-gradient(circle at 100% 0%, rgba(13, 148, 136, 0.03), transparent 40%);
+    radial-gradient(circle at 0% 0%, rgba(99, 102, 241, 0.08), transparent 40%),
+    radial-gradient(circle at 100% 0%, rgba(13, 148, 136, 0.06), transparent 40%),
+    radial-gradient(circle at 50% 100%, rgba(245, 158, 11, 0.04), transparent 40%);
   color: var(--neutral-700);
   -webkit-font-smoothing: antialiased;
 }
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
 
 h1, h2, h3, h4 { color: var(--navy-dark); letter-spacing: -0.01em; }
 h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 0; } h3 { font-size: 15px; margin-top: 0; }
@@ -67,14 +71,11 @@ a { color: var(--navy-light); text-decoration: none; }
 .app-shell { display: flex; min-height: 100vh; align-items: flex-start; }
 
 .sidebar {
-  /* flex: 0 0 248px (not just width + flex-shrink) so no sibling content — e.g. a
-     wide AG Grid forcing .main to overflow — can ever compress the sidebar's flex
-     basis. min-width backs that up as a hard floor regardless of flex behavior. */
   flex: 0 0 248px;
   width: 248px;
   min-width: 248px;
   max-width: 248px;
-  background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
+  background: linear-gradient(180deg, #0f1e40 0%, #0d2f5e 40%, #0a2744 100%);
   color: #fff;
   padding: 20px 0;
   position: sticky;
@@ -82,30 +83,46 @@ a { color: var(--navy-light); text-decoration: none; }
   height: 100vh;
   overflow-y: auto;
   overflow-x: hidden;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 4px 0 24px rgba(0,0,0,0.2);
 }
 .sidebar h1 {
   color: #fff; font-size: 17px; padding: 0 20px 16px; margin: 0;
-  border-bottom: 1px solid rgba(255,255,255,0.12);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
   display: flex; align-items: center; gap: 8px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.3), rgba(13,148,136,0.2));
+  padding-top: 16px;
 }
-.sidebar nav { display: flex; flex-direction: column; margin-top: 14px; gap: 3px; padding: 0 10px; }
+.sidebar nav { display: flex; flex-direction: column; margin-top: 14px; gap: 4px; padding: 0 10px; }
 .sidebar nav a, .sidebar nav span.disabled {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; color: #c9d7ea; font-size: 14px; border-radius: 8px;
+  padding: 10px 12px; color: #a8c4e0; font-size: 14px; border-radius: 10px;
   border-left: 3px solid transparent;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .sidebar nav a svg, .sidebar nav span.disabled svg { flex-shrink: 0; opacity: 0.85; }
-.sidebar nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
-.sidebar nav a.active { background: rgba(255,255,255,0.14); font-weight: 600; color: #fff; border-left-color: var(--teal); }
-.sidebar nav a.active svg { opacity: 1; color: var(--teal); }
-.sidebar nav span.disabled { color: #5c7193; cursor: not-allowed; }
+.sidebar nav a:hover { background: rgba(99,102,241,0.15); color: #fff; border-left-color: rgba(99,102,241,0.5); }
+.sidebar nav a.active {
+  background: linear-gradient(135deg, rgba(99,102,241,0.25), rgba(13,148,136,0.15));
+  font-weight: 700; color: #fff; border-left-color: #6366f1;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.2);
+}
+.sidebar nav a.active svg { opacity: 1; color: #a5b4fc; }
+.sidebar nav span.disabled { color: #3d5573; cursor: not-allowed; }
 
 .main { flex: 1; padding: 28px 32px; overflow-x: auto; min-width: 0; }
 
-.topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; }
-.topbar button { background: var(--neutral-0); border: 1px solid var(--neutral-200); border-radius: 8px; padding: 7px 14px; cursor: pointer; box-shadow: var(--shadow-sm); }
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px;
+  background: #fff; border-radius: 14px; padding: 14px 20px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06); border: 1px solid rgba(99,102,241,0.1);
+}
+.topbar button {
+  background: linear-gradient(135deg, #0f2a4a, #1e4976); color: #fff;
+  border: none; border-radius: 8px; padding: 8px 16px; cursor: pointer;
+  box-shadow: var(--shadow-sm); font-weight: 600; font-size: 13px;
+  display: flex; align-items: center; gap: 6px;
+}
+.topbar button:hover { background: linear-gradient(135deg, #1e4976, #2e5e94); }
 
 /* ---- Panels: the real "card" treatment — raised, colored header strip per section ---- */
 .panel {
@@ -152,14 +169,19 @@ a { color: var(--navy-light); text-decoration: none; }
 /* Stat tiles for the dashboard — each one gets its own accent color, not all navy. */
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; margin-bottom: 22px; }
 .stat-card {
-  background: var(--neutral-0); border-radius: var(--radius); padding: 18px 20px;
-  box-shadow: var(--shadow-md); border: 1px solid var(--neutral-100);
+  background: var(--neutral-0); border-radius: var(--radius); padding: 20px 22px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid rgba(0,0,0,0.04);
   border-top: 4px solid var(--accent, var(--navy));
   display: flex; flex-direction: column; gap: 8px;
   position: relative; overflow: hidden;
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: transform 0.15s, box-shadow 0.15s;
 }
-.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.stat-card::before {
+  content: ''; position: absolute; top: 0; right: 0; width: 80px; height: 80px;
+  background: radial-gradient(circle, var(--accent, var(--navy)), transparent 70%);
+  opacity: 0.06; border-radius: 50%; transform: translate(20px, -20px);
+}
+.stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 32px rgba(0,0,0,0.12); }
 .stat-card .stat-icon {
   position: absolute; top: 14px; right: 14px; width: 24px; height: 24px;
   border-radius: 7px; display: flex; align-items: center; justify-content: center;

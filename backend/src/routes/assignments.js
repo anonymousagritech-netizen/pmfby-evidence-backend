@@ -1,5 +1,5 @@
 const express = require('express');
-const { pool } = require('../db/pool');
+const { pool, withTransaction } = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/rbac');
 const { assignFarmer, bulkReassignFarmers, EmergencyReviewRequiredError } = require('../services/assignmentService');
@@ -55,6 +55,72 @@ router.post('/bulk-transfer', requireRole(ROLES.SUPER_ADMIN), async (req, res, n
 
     const result = await bulkReassignFarmers({ farmerIds, toUserId, assignedBy: req.user.id });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Village-level summary: each village with total case count + assigned/unassigned breakdown.
+// Used by the admin Assignment page to assign all farmers in a village at once.
+router.get('/village-summary', requireRole(ROLES.SUPER_ADMIN, ROLES.MANAGER), async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         fr.village_name, fr.village_id,
+         COUNT(DISTINCT fr.id)                                         AS farmer_count,
+         COUNT(DISTINCT sc.id)                                         AS case_count,
+         COUNT(DISTINCT fa.farmer_id) FILTER (WHERE fa.active = true)  AS assigned_count,
+         MAX(u.name)                  FILTER (WHERE fa.active = true)  AS assigned_to_name
+       FROM farmer_records fr
+       LEFT JOIN survey_cases sc   ON sc.farmer_id = fr.id AND sc.deleted_at IS NULL
+       LEFT JOIN farmer_assignments fa ON fa.farmer_id = fr.id
+       LEFT JOIN users u ON u.id = fa.user_id
+       WHERE fr.deleted_at IS NULL
+       GROUP BY fr.village_name, fr.village_id
+       ORDER BY case_count DESC`
+    );
+    res.json({ villages: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Assign all farmers in a village to one surveyor in a single operation.
+router.post('/by-village', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { villageId, villageName, userId } = req.body;
+    if ((!villageId && !villageName) || !userId) {
+      return res.status(400).json({ error: 'villageId (or villageName) and userId required' });
+    }
+    const where = villageId ? 'fr.village_id = $1' : 'fr.village_name = $1';
+    const key   = villageId || villageName;
+
+    const { rows: farmers } = await pool.query(
+      `SELECT fr.id FROM farmer_records fr WHERE ${where} AND fr.deleted_at IS NULL`,
+      [key]
+    );
+    if (farmers.length === 0) return res.status(404).json({ error: 'No farmers found for this village' });
+
+    let assigned = 0;
+    await withTransaction(async (client) => {
+      for (const { id: farmerId } of farmers) {
+        const existing = await client.query(
+          'SELECT id FROM farmer_assignments WHERE farmer_id = $1 AND user_id = $2 AND active = true LIMIT 1',
+          [farmerId, userId]
+        );
+        if (existing.rows[0]) continue;
+        await client.query(
+          'UPDATE farmer_assignments SET active = false, unassigned_at = now() WHERE farmer_id = $1 AND active = true',
+          [farmerId]
+        );
+        await client.query(
+          'INSERT INTO farmer_assignments (farmer_id, user_id, assigned_by) VALUES ($1,$2,$3)',
+          [farmerId, userId, req.user.id]
+        );
+        assigned++;
+      }
+    });
+    res.json({ assigned, total: farmers.length });
   } catch (err) {
     next(err);
   }

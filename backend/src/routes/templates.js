@@ -18,6 +18,37 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// Admin creates a new template (any channel: sms or internal).
+router.post('/', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { name, code, channel = 'sms', bodyTemplate } = req.body;
+    if (!name || !code || !bodyTemplate) return res.status(400).json({ error: 'name, code, bodyTemplate required' });
+    const { rows } = await pool.query(
+      `INSERT INTO message_templates (name, code, channel, body_template)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [name.trim(), code.trim().toUpperCase(), channel, bodyTemplate.trim()]
+    );
+    res.status(201).json({ template: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A template with that code already exists' });
+    next(err);
+  }
+});
+
+// Admin soft-deletes a template (sets is_active = false so existing references still resolve).
+router.delete('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE message_templates SET is_active = false, updated_at = now() WHERE id = $1 RETURNING id`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.patch('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
   try {
     const { bodyTemplate, isActive } = req.body;
