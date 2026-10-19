@@ -48,6 +48,8 @@ const STRING_ID_FIELDS = new Set([
   'Docket_ID2', 'Application_No', 'State_ID', 'District_ID',
   'Level4_ID', 'Level5_ID', 'Level6_ID', 'Level7_ID',
   'Farmer_Mobile', // keep as text: never let Excel numeric coercion drop/format digits
+  'Assign_To',     // phone number in ASSIGN column — same reason
+  'Survey_Officer_Mobile', 'Crop_Loss_Report_ID', 'Level4_Code', 'Level5_Code', 'Level6_Code', 'Level7_Code',
 ]);
 
 const REQUIRED_FIELDS = ['Farmer_Name'];
@@ -203,9 +205,11 @@ const CASE_COLUMNS = [
   ['land_division_number', 'Land_Division_Number'], ['insurance_company', 'Insurance_Company'],
   ['application_source', 'Application_Source'], ['state_name', 'State_Name'], ['state_id', 'State_ID'],
   ['district_name', 'District_Name'], ['district_id', 'District_ID'], ['level4_name', 'Level4_Name'],
-  ['level4_id', 'Level4_ID'], ['level5_name', 'Level5_Name'], ['level5_id', 'Level5_ID'],
-  ['level6_name', 'Level6_Name'], ['level6_id', 'Level6_ID'], ['level7_name', 'Level7_Name'],
-  ['level7_id', 'Level7_ID'], ['survey_status', 'Survey_Status'],
+  ['level4_id', 'Level4_ID'], ['level4_code', 'Level4_Code'],
+  ['level5_name', 'Level5_Name'], ['level5_id', 'Level5_ID'], ['level5_code', 'Level5_Code'],
+  ['level6_name', 'Level6_Name'], ['level6_id', 'Level6_ID'], ['level6_code', 'Level6_Code'],
+  ['level7_name', 'Level7_Name'], ['level7_id', 'Level7_ID'], ['level7_code', 'Level7_Code'],
+  ['survey_status', 'Survey_Status'],
   ['intimation_assign_deadline', 'Intimation_Assign_Deadline'],
   ['survey_agency_name', 'Survey_Agency_Name'], ['survey_assigned_on', 'Survey_Assigned_On'],
   ['surveyor_name', 'Surveyor_Name'], ['surveyor_mobile', 'Surveyor_Mobile'],
@@ -214,6 +218,41 @@ const CASE_COLUMNS = [
   ['source_villager_relation', 'Source_Villager_Relation'],
   ['source_villager_name', 'Source_Villager_Name'],
   ['source_villager_mobile', 'Source_Villager_Mobile'],
+  // Full PMFBY portal columns
+  ['cropping_pattern', 'Cropping_Pattern'], ['surveyor_remark', 'Surveyor_Remark'],
+  ['affected_area_percentage', 'Affected_Area_Percentage'],
+  ['crop_loss_percentage', 'Crop_Loss_Percentage'],
+  ['total_damage_percentage', 'Total_Damage_Percentage'],
+  ['survey_crop_loss_type_code', 'Survey_Crop_Loss_Type_Code'],
+  ['survey_completed_on', 'Survey_Completed_On'],
+  ['survey_cause_of_loss', 'Survey_Cause_Of_Loss'],
+  ['survey_crop_condition', 'Survey_Crop_Condition'],
+  ['incidence_loss_level', 'Incidence_Loss_Level'],
+  ['crop_status_at_survey', 'Crop_Status_At_Survey'],
+  ['survey_schedule_date', 'Survey_Schedule_Date'],
+  ['harvest_date', 'Harvest_Date'],
+  ['ic_calamity_cover', 'IC_Calamity_Cover'],
+  ['wsl_event_from_date', 'WSL_Event_From_Date'],
+  ['wsl_event_to_date', 'WSL_Event_To_Date'],
+  ['portal_flag', 'Portal_Flag'],
+  ['wsl_loss_percentage', 'WSL_Loss_Percentage'],
+  ['calamity_ic_remarks', 'Calamity_IC_Remarks'],
+  ['ic_approval_at', 'IC_Approval_At'],
+  ['ic_approval_comment', 'IC_Approval_Comment'],
+  ['deputy_director_approval_at', 'Deputy_Director_Approval_At'],
+  ['deputy_director_comment', 'Deputy_Director_Comment'],
+  ['survey_mode', 'Survey_Mode'],
+  ['other_crop_name', 'Other_Crop_Name'],
+  ['survey_affected_crop_name', 'Survey_Affected_Crop_Name'],
+  ['ic_signed_copy_uploaded', 'IC_Signed_Copy_Uploaded'],
+  ['is_survey_officer_present', 'Is_Survey_Officer_Present'],
+  ['survey_officer_name', 'Survey_Officer_Name'],
+  ['survey_officer_mobile', 'Survey_Officer_Mobile'],
+  ['survey_officer_designation', 'Survey_Officer_Designation'],
+  ['spoc_intimation_assign_expire', 'Spoc_Intimation_Assign_Expire'],
+  ['action_status', 'Action_Status'],
+  ['crop_loss_report_id', 'Crop_Loss_Report_ID'],
+  ['picture_affected_area', 'Picture_Affected_Area'],
 ];
 
 // DB columns typed `date`/`timestamptz` — a value that doesn't parse as a real date
@@ -224,7 +263,13 @@ const CASE_COLUMNS = [
 // it was always a date column.
 const DATE_COLUMNS = new Set([
   'date_of_incidence', 'farmer_intimation_date', 'sowing_date',
-  'survey_assigned_on', 'intimation_assign_deadline',
+  'survey_assigned_on', 'intimation_assign_deadline', 'harvest_date',
+  'wsl_event_from_date', 'wsl_event_to_date',
+]);
+
+const TIMESTAMP_COLUMNS = new Set([
+  'survey_completed_on', 'survey_schedule_date', 'ic_approval_at',
+  'deputy_director_approval_at',
 ]);
 
 function toDbValue(value, columnName) {
@@ -233,7 +278,7 @@ function toDbValue(value, columnName) {
     if (Number.isNaN(value.getTime())) return null;
     return value;
   }
-  if (DATE_COLUMNS.has(columnName)) {
+  if (DATE_COLUMNS.has(columnName) || TIMESTAMP_COLUMNS.has(columnName)) {
     // Excel/ExcelJS sometimes hands back a date as a string (or, as seen on real data,
     // a non-date status string like "Active") rather than a Date object. Only accept
     // it if it actually parses to a real date; otherwise drop it to NULL rather than
@@ -300,6 +345,39 @@ async function upsertCase(client, farmerId, fields, importRowRef) {
   return { status: 'updated', changedFields };
 }
 
+// Auto-assign a farmer to the user whose phone matches the ASSIGN column value.
+// Skips silently if no user with that phone exists (admin just leaves column blank or
+// puts a nonexistent number — never throws, never blocks the rest of the import).
+async function autoAssignFarmer(client, farmerId, assignPhone, assignedBy) {
+  const userRow = await client.query(
+    `SELECT id FROM users WHERE phone = $1 AND is_active = true AND deleted_at IS NULL LIMIT 1`,
+    [assignPhone]
+  );
+  if (!userRow.rows[0]) return; // phone not found — skip silently
+
+  const userId = userRow.rows[0].id;
+
+  // Check if already actively assigned to this user — no-op if so.
+  const existing = await client.query(
+    `SELECT id FROM farmer_assignments WHERE farmer_id = $1 AND user_id = $2 AND active = true LIMIT 1`,
+    [farmerId, userId]
+  );
+  if (existing.rows[0]) return;
+
+  // Revoke any existing active assignment (one active assignment per farmer at a time).
+  await client.query(
+    `UPDATE farmer_assignments SET active = false, unassigned_at = now()
+     WHERE farmer_id = $1 AND active = true`,
+    [farmerId]
+  );
+
+  // Create the new assignment.
+  await client.query(
+    `INSERT INTO farmer_assignments (farmer_id, user_id, assigned_by) VALUES ($1, $2, $3)`,
+    [farmerId, userId, assignedBy]
+  );
+}
+
 // Step 2: commit the (possibly admin-overridden) mapping. Performs dedupe + upsert in a
 // single DB transaction per row-batch, and persists an import_batches summary row.
 async function commitImport({ sessionId, confirmedMapping, uploadedBy }) {
@@ -323,6 +401,11 @@ async function commitImport({ sessionId, confirmedMapping, uploadedBy }) {
         fields = correctedFields;
         const farmerId = await findOrCreateFarmer(client, fields);
         const result = await upsertCase(client, farmerId, fields, `row:${row.rowNumber}`);
+        // ASSIGN column: if admin filled in a phone number, auto-assign the farmer to that user.
+        const assignPhone = normalizeFarmerMobile(fields.Assign_To);
+        if (assignPhone) {
+          await autoAssignFarmer(client, farmerId, assignPhone, uploadedBy);
+        }
         summary[result.status === 'inserted' ? 'inserted'
           : result.status === 'updated' ? 'updated' : 'unchanged'] += 1;
         rowLog.push({ row: row.rowNumber, status: result.status, changedFields: result.changedFields, villageNote });
@@ -362,11 +445,13 @@ const TEMPLATE_HEADERS = [
   'insuranceCompanyName', 'surveyAgencyName', 'applicationSourceOrigin',
   'surveyorName', 'surveyorMobile', 'latitude', 'longitude', 'surveyAssignedOn',
   'intimationAssignDeadline', 'surveyStatus', 'isFarmerPresent',
-  'villagersRelation', 'villagersName', 'villagersMobile', 'ASSIGN',
+  'villagersRelation', 'villagersName', 'villagersMobile',
+  'ASSIGN',       // ← PUT SURVEYOR PHONE HERE to auto-assign the case on import
+  'farmerMobile', // farmer's own contact number
 ];
 const TEMPLATE_EXAMPLE_ROW = {
   docketID: '040106260002542975', seasonName: 'KHARIF', schemeName: 'PMFBY',
-  applicationNo: '040106261031541068110', farmerName: 'EXAMPLE Jogender Singh', farmerMobile: '9999999999',
+  applicationNo: '040106261031541068110', farmerName: 'EXAMPLE Jogender Singh', farmerMobile: '8587870501',
   typeOfIncidence: 'Unseasonal Rains', dateOfIncidence: '2026-10-12',
   cropStatusAtIncidence: 'Harvested', farmerIntimationDate: '2026-10-13',
   sowingDate: '2026-07-01', farmArea: 0.0683, cropName: 'Paddy (Dhan)',
@@ -382,7 +467,8 @@ const TEMPLATE_EXAMPLE_ROW = {
   surveyorName: 'EXAMPLE Surveyor', surveyorMobile: '9999999999',
   latitude: 29.43, longitude: 77.32, surveyAssignedOn: '2026-10-14',
   intimationAssignDeadline: 'Active', surveyStatus: 'Survey Agency Assigned',
-  isFarmerPresent: 'No', villagersRelation: '', villagersName: '', villagersMobile: '', ASSIGN: '',
+  isFarmerPresent: 'No', villagersRelation: '', villagersName: '', villagersMobile: '',
+  ASSIGN: '7651900038', // example: put surveyor phone here → auto-assigned on import
 };
 
 async function buildImportTemplateWorkbook() {

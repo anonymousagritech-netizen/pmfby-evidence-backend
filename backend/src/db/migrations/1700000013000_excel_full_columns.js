@@ -1,0 +1,61 @@
+exports.up = (pgm) => {
+  // All columns present in the PMFBY portal Excel export but not yet stored in survey_cases.
+  // All nullable — they're empty for newly-assigned (not-yet-surveyed) cases.
+  pgm.addColumns('survey_cases', {
+    cropping_pattern:             { type: 'text' },
+    surveyor_remark:              { type: 'text' },
+    affected_area_percentage:     { type: 'numeric' },
+    crop_loss_percentage:         { type: 'numeric' },
+    total_damage_percentage:      { type: 'numeric' },
+    survey_crop_loss_type_code:   { type: 'text' },
+    survey_completed_on:          { type: 'timestamptz' },
+    survey_cause_of_loss:         { type: 'text' },
+    survey_crop_condition:        { type: 'text' },
+    incidence_loss_level:         { type: 'text' },
+    crop_status_at_survey:        { type: 'text' },
+    survey_schedule_date:         { type: 'timestamptz' },
+    harvest_date:                 { type: 'date' },
+    ic_calamity_cover:            { type: 'text' },
+    wsl_event_from_date:          { type: 'date' },
+    wsl_event_to_date:            { type: 'date' },
+    portal_flag:                  { type: 'text' },
+    wsl_loss_percentage:          { type: 'numeric' },
+    calamity_ic_remarks:          { type: 'text' },
+    ic_approval_at:               { type: 'timestamptz' },
+    ic_approval_comment:          { type: 'text' },
+    deputy_director_approval_at:  { type: 'timestamptz' },
+    deputy_director_comment:      { type: 'text' },
+    survey_mode:                  { type: 'text' },
+    other_crop_name:              { type: 'text' },
+    survey_affected_crop_name:    { type: 'text' },
+    ic_signed_copy_uploaded:      { type: 'text' },
+    is_survey_officer_present:    { type: 'text' },
+    survey_officer_name:          { type: 'text' },
+    survey_officer_mobile:        { type: 'text' },
+    survey_officer_designation:   { type: 'text' },
+    spoc_intimation_assign_expire:{ type: 'text' },
+    action_status:                { type: 'text' },
+    crop_loss_report_id:          { type: 'text' },
+    picture_affected_area:        { type: 'text' },
+    level4_code:                  { type: 'text' },
+    level5_code:                  { type: 'text' },
+    level6_code:                  { type: 'text' },
+    level7_code:                  { type: 'text' },
+  });
+};
+
+exports.down = (pgm) => {
+  pgm.dropColumns('survey_cases', [
+    'cropping_pattern', 'surveyor_remark', 'affected_area_percentage', 'crop_loss_percentage',
+    'total_damage_percentage', 'survey_crop_loss_type_code', 'survey_completed_on',
+    'survey_cause_of_loss', 'survey_crop_condition', 'incidence_loss_level', 'crop_status_at_survey',
+    'survey_schedule_date', 'harvest_date', 'ic_calamity_cover', 'wsl_event_from_date',
+    'wsl_event_to_date', 'portal_flag', 'wsl_loss_percentage', 'calamity_ic_remarks',
+    'ic_approval_at', 'ic_approval_comment', 'deputy_director_approval_at', 'deputy_director_comment',
+    'survey_mode', 'other_crop_name', 'survey_affected_crop_name', 'ic_signed_copy_uploaded',
+    'is_survey_officer_present', 'survey_officer_name', 'survey_officer_mobile',
+    'survey_officer_designation', 'spoc_intimation_assign_expire', 'action_status',
+    'crop_loss_report_id', 'picture_affected_area', 'level4_code', 'level5_code',
+    'level6_code', 'level7_code',
+  ]);
+};
