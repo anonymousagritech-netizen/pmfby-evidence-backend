@@ -3,6 +3,7 @@ const { pool } = require('../db/pool');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, ROLES } = require('../middleware/rbac');
 const { renderTemplate } = require('../utils/templateRenderer');
+const { formatDateIST, formatDateTimeIST } = require('../utils/dateFormat');
 const { getCaseIfSurveyorAssigned, getCaseForUserOrNull } = require('../services/resourceScope');
 
 const router = express.Router();
@@ -57,14 +58,18 @@ router.post('/:id/render', async (req, res, next) => {
       Farmer_Mobile: farmer.farmer_mobile,
       Attempt_No: caseRow.attempt_count,
       Village_Name: farmer.village_name,
-      Original_Survey_Date: caseRow.survey_assigned_on,
+      // These were previously passed through raw (a JS Date for the *_on columns,
+      // whatever string the client sent for the others) and String()'d by renderTemplate,
+      // which leaked `Tue Oct 13 2026 00:00:00 GMT+0000 (Coordinated Universal Time)`
+      // straight into sent SMS text. Always format as a clean IST date/time instead.
+      Original_Survey_Date: formatDateIST(caseRow.survey_assigned_on),
       Denial_Reason: req.body.denialReason,
-      Postponed_Survey_Date: req.body.postponedSurveyDate,
+      Postponed_Survey_Date: formatDateIST(req.body.postponedSurveyDate),
       Postpone_Reason: req.body.postponeReason,
       Contact_Issue: req.body.contactIssue,
-      Survey_Date: caseRow.survey_assigned_on,
+      Survey_Date: formatDateIST(caseRow.survey_assigned_on),
       Incident_Description: req.body.incidentDescription,
-      Evidence_DateTime: req.body.evidenceDateTime,
+      Evidence_DateTime: formatDateTimeIST(req.body.evidenceDateTime),
       Surveyor_Name: req.user.name,
       Surveyor_Mobile: req.user.phone,
     };

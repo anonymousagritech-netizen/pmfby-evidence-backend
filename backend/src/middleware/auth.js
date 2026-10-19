@@ -17,7 +17,7 @@ async function authenticate(req, res, next) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
     const { rows } = await pool.query(
-      `SELECT u.id, u.name, u.email, u.is_active, u.scope_state_id, u.scope_district_id,
+      `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.scope_state_id, u.scope_district_id,
               u.force_password_change, u.home_district_ids,
               r.key AS role_key, r.name AS role_name
        FROM users u JOIN roles r ON r.id = u.role_id
