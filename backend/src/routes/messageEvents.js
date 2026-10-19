@@ -8,9 +8,11 @@ const { recordAudit } = require('../services/auditLog');
 const router = express.Router();
 router.use(authenticate);
 
-// Records that the SMS composer was opened with the rendered text — status is always
-// 'drafted' or 'opened_composer', never 'sent'/'delivered' (composer-opened is not
-// delivery confirmation; see SMS flow spec).
+// Records an SMS attempt with the rendered text. Status values:
+// 'drafted' / 'opened_composer' — the legacy composer-handoff path (no delivery
+// confirmation possible, see SmsComposer.kt); 'sent' / 'send_failed' / 'delivered' /
+// 'delivery_failed' — the direct-send path (DirectSmsSender.kt), reporting REAL
+// carrier-level status via SmsManager PendingIntent broadcasts.
 router.post('/', async (req, res, next) => {
   try {
     const { caseId, templateId, renderedText, phoneNumber, status, callEventId, idempotencyKey } = req.body;
@@ -48,8 +50,9 @@ router.post('/', async (req, res, next) => {
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const { status } = req.body;
-    if (!['drafted', 'opened_composer'].includes(status)) {
-      return res.status(400).json({ error: "status must be 'drafted' or 'opened_composer'" });
+    const VALID_STATUSES = ['drafted', 'opened_composer', 'sent', 'send_failed', 'delivered', 'delivery_failed', 'send_status_unknown'];
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of ${VALID_STATUSES.join(', ')}` });
     }
     const { rows: existingRows } = await pool.query('SELECT * FROM message_events WHERE id = $1', [req.params.id]);
     if (!existingRows[0]) return res.status(404).json({ error: 'Not found' });

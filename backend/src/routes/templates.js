@@ -62,12 +62,12 @@ router.post('/:id/render', async (req, res, next) => {
       // whatever string the client sent for the others) and String()'d by renderTemplate,
       // which leaked `Tue Oct 13 2026 00:00:00 GMT+0000 (Coordinated Universal Time)`
       // straight into sent SMS text. Always format as a clean IST date/time instead.
-      Original_Survey_Date: formatDateIST(caseRow.survey_assigned_on),
+      Original_Survey_Date: formatDateTimeIST(caseRow.survey_assigned_on),
       Denial_Reason: req.body.denialReason,
       Postponed_Survey_Date: formatDateIST(req.body.postponedSurveyDate),
       Postpone_Reason: req.body.postponeReason,
       Contact_Issue: req.body.contactIssue,
-      Survey_Date: formatDateIST(caseRow.survey_assigned_on),
+      Survey_Date: formatDateTimeIST(caseRow.survey_assigned_on),
       Incident_Description: req.body.incidentDescription,
       Evidence_DateTime: formatDateTimeIST(req.body.evidenceDateTime),
       Surveyor_Name: req.user.name,
