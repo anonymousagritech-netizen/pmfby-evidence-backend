@@ -12,6 +12,7 @@ const TEMPLATES = [
     body: `किसान सर्वे की सूचना: किसान ने मना किया
 किसान का नाम: {Farmer_Name}
 किसान का मोबाइल नंबर: {Farmer_Mobile}
+डॉकेट संख्या: {Docket_IDs}
 प्रयास संख्या (Attempt No.): {Attempt_No}
 गाँव का नाम: {Village_Name}
 मूल सर्वे तिथि: {Original_Survey_Date}
@@ -28,6 +29,7 @@ const TEMPLATES = [
     body: `किसान सर्वे स्थगित होने की सूचना
 किसान का नाम: {Farmer_Name}
 किसान का मोबाइल नंबर: {Farmer_Mobile}
+डॉकेट संख्या: {Docket_IDs}
 प्रयास संख्या (Attempt No.): {Attempt_No}
 गाँव का नाम: {Village_Name}
 मूल सर्वे तिथि: {Original_Survey_Date}
@@ -46,6 +48,7 @@ const TEMPLATES = [
     body: `किसान सर्वे संपर्क सूचना
 किसान का नाम: {Farmer_Name}
 किसान का मोबाइल नंबर: {Farmer_Mobile}
+डॉकेट संख्या: {Docket_IDs}
 प्रयास संख्या (Attempt No.): {Attempt_No}
 गाँव का नाम: {Village_Name}
 मूल सर्वे तिथि: {Original_Survey_Date}

@@ -112,6 +112,12 @@ router.post('/:id/render', async (req, res, next) => {
       caseCount = 1;
     }
 
+    // For session mode use the batch's intimation date as the survey date reference.
+    // For single-case mode use the case's survey_assigned_on.
+    const surveyDateValue = caseRow
+      ? caseRow.survey_assigned_on
+      : (session ? session.intimation_batch_date : null);
+
     const data = {
       Farmer_Name: farmer.farmer_name,
       Farmer_Mobile: farmer.farmer_mobile,
@@ -119,12 +125,12 @@ router.post('/:id/render', async (req, res, next) => {
       Village_Name: farmer.village_name,
       Docket_IDs: docketIdsText,
       Case_Count: caseCount,
-      Original_Survey_Date: caseRow ? formatDateIST(caseRow.survey_assigned_on) : '',
+      Original_Survey_Date: formatDateIST(surveyDateValue) || '',
       Denial_Reason: req.body.denialReason,
       Postponed_Survey_Date: formatDateIST(req.body.postponedSurveyDate),
       Postpone_Reason: req.body.postponeReason,
       Contact_Issue: req.body.contactIssue,
-      Survey_Date: caseRow ? formatDateIST(caseRow.survey_assigned_on) : '',
+      Survey_Date: formatDateIST(surveyDateValue) || '',
       Incident_Description: req.body.incidentDescription,
       Evidence_DateTime: formatDateTimeIST(req.body.evidenceDateTime),
       Surveyor_Name: req.user.name,
