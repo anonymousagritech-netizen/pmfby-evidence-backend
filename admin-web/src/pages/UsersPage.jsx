@@ -354,22 +354,67 @@ export default function UsersPage() {
     <div>
       <BulkSurveyorImportCard onImported={load} />
 
-      <Card title="Create User" icon={UserPlus} accent="violet">
-        <form onSubmit={handleCreate} className="flex-row" style={{ flexWrap: 'wrap' }}>
-          <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-          <input placeholder="Phone (optional)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <input placeholder="Temporary password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
-          <select value={form.roleKey} onChange={(e) => setForm({ ...form, roleKey: e.target.value })}>
-            {ROLE_OPTIONS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-          </select>
-          <input placeholder="Scope State ID (managers)" value={form.scopeStateId} onChange={(e) => setForm({ ...form, scopeStateId: e.target.value })} />
-          <input placeholder="Scope District ID (managers)" value={form.scopeDistrictId} onChange={(e) => setForm({ ...form, scopeDistrictId: e.target.value })} />
-          <button className="primary" type="submit">Create User</button>
-        </form>
-        {error && <div className="error-text">{error}</div>}
-        {message && <div style={{ color: 'var(--success)', marginTop: 8 }}>{message}</div>}
-      </Card>
+      {/* Create User – colorful card */}
+      <div style={{
+        background: '#fff', borderRadius: 16, marginBottom: 22,
+        boxShadow: '0 4px 24px rgba(0,0,0,0.08)', overflow: 'hidden',
+      }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #6d28d9, #4f46e5)',
+          padding: '16px 22px', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 10, padding: 9 }}>
+            <UserPlus size={20} style={{ color: '#fff' }} />
+          </div>
+          <div>
+            <h2 style={{ margin: 0, color: '#fff', fontSize: 17 }}>Create New User</h2>
+            <p style={{ margin: 0, opacity: 0.8, fontSize: 12.5 }}>Add a surveyor, manager or admin account</p>
+          </div>
+        </div>
+        <div style={{ padding: 24 }}>
+          <form onSubmit={handleCreate}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+              <div>
+                <label>Full Name *</label>
+                <input placeholder="e.g. Ramesh Kumar" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              </div>
+              <div>
+                <label>Email Address *</label>
+                <input type="email" placeholder="user@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+              </div>
+              <div>
+                <label>Mobile Phone</label>
+                <input placeholder="+91XXXXXXXXXX" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 20 }}>
+              <div>
+                <label>Temporary Password *</label>
+                <input type="password" placeholder="Min 8 characters" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+              </div>
+              <div>
+                <label>Role *</label>
+                <select value={form.roleKey} onChange={(e) => setForm({ ...form, roleKey: e.target.value })}>
+                  {ROLE_OPTIONS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Scope District ID <span style={{ fontWeight: 400, textTransform: 'none' }}>(managers)</span></label>
+                <input placeholder="e.g. D001" value={form.scopeDistrictId} onChange={(e) => setForm({ ...form, scopeDistrictId: e.target.value })} />
+              </div>
+            </div>
+            {error && <div style={{ background: '#fee2e2', color: '#b42318', borderRadius: 10, padding: '10px 16px', marginBottom: 14, fontSize: 13, fontWeight: 600 }}>{error}</div>}
+            {message && <div style={{ background: '#dcfce7', color: '#15803d', borderRadius: 10, padding: '10px 16px', marginBottom: 14, fontSize: 13, fontWeight: 600 }}>{message}</div>}
+            <button type="submit" style={{
+              background: 'linear-gradient(135deg, #6d28d9, #4f46e5)', color: '#fff', border: 'none',
+              borderRadius: 10, padding: '11px 28px', fontWeight: 700, cursor: 'pointer', fontSize: 14,
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+            }}>
+              <UserPlus size={15} /> Create User
+            </button>
+          </form>
+        </div>
+      </div>
 
       <Card title="All Users" icon={UsersIcon} accent="navy">
         <p className="help-text">Deactivate/delete revoke access immediately; both are reversible. You can't act on your own account.</p>

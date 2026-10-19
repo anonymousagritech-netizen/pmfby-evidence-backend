@@ -77,6 +77,7 @@ export default function AutoAssignPage() {
   const [transferTarget, setTransferTarget] = useState('');
   const [transferMessage, setTransferMessage] = useState(null);
   const [transferring, setTransferring] = useState(false);
+  const [districtGeo, setDistrictGeo] = useState(null);
 
   useEffect(() => {
     api.get('/users').then((res) => setSurveyors(res.data.users.filter((u) => u.role_key === 'surveyor'))).catch(() => {});
@@ -94,12 +95,24 @@ export default function AutoAssignPage() {
     };
   }
 
+  async function fetchDistrictGeo(ids) {
+    try {
+      const idsStr = ids.join(',');
+      const res = await api.get(`/districts/boundaries${idsStr ? `?ids=${encodeURIComponent(idsStr)}` : ''}`);
+      setDistrictGeo(res.data);
+    } catch {
+      // non-fatal — district outlines are optional
+    }
+  }
+
   async function run(mode) {
     setError(null);
     setLoading(true);
     try {
-      const res = await api.post(`/auto-assign/${mode}`, payload());
+      const p = payload();
+      const res = await api.post(`/auto-assign/${mode}`, p);
       setResult({ mode, ...res.data });
+      if (p.districtIds.length > 0) fetchDistrictGeo(p.districtIds);
     } catch (err) {
       setError(err.response?.data?.error || `Auto-assign ${mode} failed`);
     } finally {
@@ -200,14 +213,14 @@ export default function AutoAssignPage() {
 
       <DataUploadCard
         title="Village Centroid Data"
-        description="The ~150MB village centroid file isn't in git (see ROADMAP.md) — upload it here once per backend deploy so map/fuzzy-match features have data to work with."
+        description="Upload the ~150MB village centroid file once per backend deploy for map/fuzzy-match features. District outlines are auto-loaded from git whenever you run Preview."
         statusEndpoint="/village-data/status"
         uploadEndpoint="/village-data/upload"
         accent="teal"
       />
       <DataUploadCard
         title="Village Boundary Polygon Data"
-        description="The ~200MB simplified village boundary polygon file isn't in git either (see ROADMAP.md) — upload it here once per backend deploy so the polygon map view below has shapes to draw."
+        description="Upload the ~200MB simplified village boundary polygon file once per backend deploy for village-outline map view. District outlines come from git automatically."
         statusEndpoint="/boundaries/status"
         uploadEndpoint="/boundaries/upload"
         accent="sky"
@@ -320,6 +333,16 @@ export default function AutoAssignPage() {
                       attribution='&copy; OpenStreetMap contributors'
                       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                     />
+                    {/* District boundary outlines from git GeoJSON — auto-fetched */}
+                    {districtGeo?.features?.map((f, i) => (
+                      <Polygon
+                        key={`dist-${i}`}
+                        positions={geometryToLeafletPositions(f.geometry)}
+                        pathOptions={{ color: '#0f2a4a', fillColor: 'transparent', weight: 2, dashArray: '5,4', opacity: 0.6 }}
+                      >
+                        <Popup><strong>District: {f.properties?.district || f.properties?.District || 'Unknown'}</strong></Popup>
+                      </Polygon>
+                    ))}
                     {mapView === 'polygon' && polygons.map((p, i) => (
                       <Polygon
                         key={i}
