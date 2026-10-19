@@ -84,12 +84,20 @@ const VALID_OUTCOMES = ['denied', 'postponed', 'wrong_number', 'dispute_incident
 
 router.post('/:id/resolve-outcome', async (req, res, next) => {
   try {
-    const { outcome, reason, postponedUntil } = req.body;
+    const { outcome, reason, postponedUntil, farmerAgreedToPostpone, callEventId } = req.body;
     if (!VALID_OUTCOMES.includes(outcome)) {
       return res.status(400).json({ error: `outcome must be one of ${VALID_OUTCOMES.join(', ')}` });
     }
-    if (outcome === 'postponed' && !postponedUntil) {
-      return res.status(400).json({ error: 'postponedUntil is required when outcome=postponed' });
+    if (outcome === 'postponed') {
+      // Two distinct facts must be captured, not just the new date — a farmer can be
+      // marked postponed procedurally without truly agreeing to the date. See the
+      // Excel activity export's "Farmer Agreed" column.
+      if (typeof farmerAgreedToPostpone !== 'boolean') {
+        return res.status(400).json({ error: 'farmerAgreedToPostpone (true/false) is required when outcome=postponed' });
+      }
+      if (farmerAgreedToPostpone && !postponedUntil) {
+        return res.status(400).json({ error: 'postponedUntil is required when outcome=postponed and farmerAgreedToPostpone=true' });
+      }
     }
 
     let caseRow;
@@ -113,17 +121,42 @@ router.post('/:id/resolve-outcome', async (req, res, next) => {
         });
       }
     }
+    const agreedToPostpone = outcome === 'postponed' ? farmerAgreedToPostpone : null;
+    const effectivePostponedUntil = outcome === 'postponed' && farmerAgreedToPostpone ? postponedUntil : null;
+
     const updated = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `UPDATE survey_cases SET contact_status = $2, postponed_until = $3,
            closed_at = CASE WHEN $4 THEN now() ELSE NULL END,
            closed_reason = $5, updated_at = now()
          WHERE id = $1 RETURNING *`,
-        [caseRow.id, outcome, outcome === 'postponed' ? postponedUntil : null, isClosing, reason || null]
+        [caseRow.id, outcome, effectivePostponedUntil, isClosing, reason || null]
       );
+
+      // Write the per-attempt record too — this is what the Excel activity export reads
+      // from (one row per call_event/attempt). Prefer the caller-supplied callEventId
+      // (the attempt this outcome resolution actually belongs to); fall back to the
+      // most recent call_event for this case so older app builds that don't send
+      // callEventId yet still get a row recorded.
+      let targetCallEventId = callEventId || null;
+      if (!targetCallEventId) {
+        const { rows: latest } = await client.query(
+          'SELECT id FROM call_events WHERE case_id = $1 ORDER BY initiated_at DESC LIMIT 1',
+          [caseRow.id]
+        );
+        targetCallEventId = latest[0]?.id || null;
+      }
+      if (targetCallEventId) {
+        await client.query(
+          `UPDATE call_events SET resolved_outcome = $2, farmer_agreed_to_postpone = $3, postponed_until = $4
+           WHERE id = $1`,
+          [targetCallEventId, outcome, agreedToPostpone, effectivePostponedUntil]
+        );
+      }
+
       await recordAudit(client, {
         userId: req.user.id, action: 'resolve_outcome', resourceType: 'survey_cases',
-        resourceId: caseRow.id, metadata: { outcome, reason, postponedUntil },
+        resourceId: caseRow.id, metadata: { outcome, reason, postponedUntil: effectivePostponedUntil, farmerAgreedToPostpone: agreedToPostpone },
       });
       return rows[0];
     });
