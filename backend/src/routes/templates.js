@@ -56,7 +56,7 @@ router.post('/:id/render', async (req, res, next) => {
     const data = {
       Farmer_Name: farmer.farmer_name,
       Farmer_Mobile: farmer.farmer_mobile,
-      Attempt_No: caseRow.attempt_count,
+      Attempt_No: caseRow.attempt_count + 1,
       Village_Name: farmer.village_name,
       // These were previously passed through raw (a JS Date for the *_on columns,
       // whatever string the client sent for the others) and String()'d by renderTemplate,
@@ -74,7 +74,7 @@ router.post('/:id/render', async (req, res, next) => {
       Surveyor_Mobile: req.user.phone,
     };
     const { rendered, missing } = renderTemplate(template.body_template, data);
-    res.json({ rendered, missing, attemptNo: caseRow.attempt_count });
+    res.json({ rendered, missing, attemptNo: caseRow.attempt_count + 1 });
   } catch (err) {
     next(err);
   }
