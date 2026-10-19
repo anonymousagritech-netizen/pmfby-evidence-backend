@@ -104,7 +104,7 @@ router.post('/', async (req, res, next) => {
     let caseParams;
     if (intimationBatchDate) {
       caseQuery = `SELECT * FROM survey_cases WHERE farmer_id = $1
-                   AND farmer_intimation_date = $2 AND deleted_at IS NULL
+                   AND farmer_intimation_date::date = $2::date AND deleted_at IS NULL
                    ORDER BY docket_id2`;
       caseParams = [farmerId, intimationBatchDate];
     } else {
