@@ -77,15 +77,16 @@ router.post('/:id/render', async (req, res, next) => {
     const template = templateRows[0];
     if (!template) return res.status(404).json({ error: 'Template not found' });
 
-    let farmer, attemptNo, docketIdsText, caseCount, caseRow;
+    let farmer, attemptNo, docketIdsText, caseCount, caseRow, session;
 
     if (sessionId) {
       // Session-based render: fetch session + farmer + all docket IDs in the batch.
-      const { rows: [session] } = await pool.query(
+      const { rows: [sessionRow] } = await pool.query(
         `SELECT cs.*, fr.farmer_name, fr.farmer_mobile, fr.village_name
          FROM contact_sessions cs JOIN farmer_records fr ON fr.id = cs.farmer_id
          WHERE cs.id = $1`, [sessionId]
       );
+      session = sessionRow;
       if (!session) return res.status(404).json({ error: 'Session not found' });
       if (req.user.role_key === ROLES.SURVEYOR && session.user_id !== req.user.id) {
         return res.status(403).json({ error: 'Not your session' });
