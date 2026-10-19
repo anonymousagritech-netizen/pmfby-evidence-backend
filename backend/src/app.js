@@ -23,6 +23,7 @@ const autoAssignRoutes = require('./routes/autoAssign');
 const villageDataRoutes = require('./routes/villageData');
 const boundaryRoutes = require('./routes/boundaries');
 const districtBoundaryRoutes = require('./routes/districtBoundaries');
+const contactSessionRoutes = require('./routes/contactSessions');
 
 function createApp() {
   const app = express();
@@ -52,6 +53,7 @@ function createApp() {
   app.use('/api/village-data', villageDataRoutes);
   app.use('/api/boundaries', boundaryRoutes);
   app.use('/api/districts', districtBoundaryRoutes);
+  app.use('/api/contact-sessions', contactSessionRoutes);
 
   app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

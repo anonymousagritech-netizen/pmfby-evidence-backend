@@ -64,48 +64,74 @@ router.patch('/:id', requireRole(ROLES.SUPER_ADMIN), async (req, res, next) => {
   }
 });
 
-// Server-side render endpoint: fields come from case/farmer data, never hand-typed
-// Attempt No. Incident Format 4 is deliberately NOT reachable through this endpoint's
-// normal SMS flow consumers (mobile only wires Formats 1-3 into the SMS composer).
+// Server-side render endpoint: fields come from case/farmer data, never hand-typed.
+// Supports two modes:
+//   caseId   — single-case render (legacy, still works for per-case SMS)
+//   sessionId — session render (farmer-batch contact): includes {Docket_IDs}, {Case_Count}
 router.post('/:id/render', async (req, res, next) => {
   try {
-    const { caseId } = req.body;
-    if (!caseId) return res.status(400).json({ error: 'caseId required' });
-
-    let caseRow;
-    if (req.user.role_key === ROLES.SURVEYOR) caseRow = await getCaseIfSurveyorAssigned(caseId, req.user.id);
-    else caseRow = await getCaseForUserOrNull(caseId, req.user);
-    if (!caseRow) return res.status(404).json({ error: 'Case not found or not accessible' });
+    const { caseId, sessionId } = req.body;
+    if (!caseId && !sessionId) return res.status(400).json({ error: 'caseId or sessionId required' });
 
     const { rows: templateRows } = await pool.query('SELECT * FROM message_templates WHERE id = $1', [req.params.id]);
     const template = templateRows[0];
     if (!template) return res.status(404).json({ error: 'Template not found' });
 
-    const { rows: farmerRows } = await pool.query('SELECT * FROM farmer_records WHERE id = $1', [caseRow.farmer_id]);
-    const farmer = farmerRows[0];
+    let farmer, attemptNo, docketIdsText, caseCount, caseRow;
+
+    if (sessionId) {
+      // Session-based render: fetch session + farmer + all docket IDs in the batch.
+      const { rows: [session] } = await pool.query(
+        `SELECT cs.*, fr.farmer_name, fr.farmer_mobile, fr.village_name
+         FROM contact_sessions cs JOIN farmer_records fr ON fr.id = cs.farmer_id
+         WHERE cs.id = $1`, [sessionId]
+      );
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      if (req.user.role_key === ROLES.SURVEYOR && session.user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Not your session' });
+      }
+      farmer = { farmer_name: session.farmer_name, farmer_mobile: session.farmer_mobile, village_name: session.village_name };
+      docketIdsText = session.docket_ids_text || '';
+      caseCount = session.case_count || 0;
+      // Attempt No for session = how many sessions exist for this farmer+batch so far.
+      const { rows: [{ cnt }] } = await pool.query(
+        `SELECT count(*)::int AS cnt FROM contact_sessions
+         WHERE farmer_id = $1 AND intimation_batch_date IS NOT DISTINCT FROM $2`,
+        [session.farmer_id, session.intimation_batch_date]
+      );
+      attemptNo = cnt;
+    } else {
+      // Single-case legacy mode.
+      if (req.user.role_key === ROLES.SURVEYOR) caseRow = await getCaseIfSurveyorAssigned(caseId, req.user.id);
+      else caseRow = await getCaseForUserOrNull(caseId, req.user);
+      if (!caseRow) return res.status(404).json({ error: 'Case not found or not accessible' });
+      const { rows: farmerRows } = await pool.query('SELECT * FROM farmer_records WHERE id = $1', [caseRow.farmer_id]);
+      farmer = farmerRows[0];
+      attemptNo = caseRow.attempt_count + 1;
+      docketIdsText = caseRow.docket_id2 || '';
+      caseCount = 1;
+    }
 
     const data = {
       Farmer_Name: farmer.farmer_name,
       Farmer_Mobile: farmer.farmer_mobile,
-      Attempt_No: caseRow.attempt_count + 1,
+      Attempt_No: attemptNo,
       Village_Name: farmer.village_name,
-      // These were previously passed through raw (a JS Date for the *_on columns,
-      // whatever string the client sent for the others) and String()'d by renderTemplate,
-      // which leaked `Tue Oct 13 2026 00:00:00 GMT+0000 (Coordinated Universal Time)`
-      // straight into sent SMS text. Always format as a clean IST date/time instead.
-      Original_Survey_Date: formatDateTimeIST(caseRow.survey_assigned_on),
+      Docket_IDs: docketIdsText,
+      Case_Count: caseCount,
+      Original_Survey_Date: caseRow ? formatDateTimeIST(caseRow.survey_assigned_on) : '',
       Denial_Reason: req.body.denialReason,
       Postponed_Survey_Date: formatDateIST(req.body.postponedSurveyDate),
       Postpone_Reason: req.body.postponeReason,
       Contact_Issue: req.body.contactIssue,
-      Survey_Date: formatDateTimeIST(caseRow.survey_assigned_on),
+      Survey_Date: caseRow ? formatDateTimeIST(caseRow.survey_assigned_on) : '',
       Incident_Description: req.body.incidentDescription,
       Evidence_DateTime: formatDateTimeIST(req.body.evidenceDateTime),
       Surveyor_Name: req.user.name,
       Surveyor_Mobile: req.user.phone,
     };
     const { rendered, missing } = renderTemplate(template.body_template, data);
-    res.json({ rendered, missing, attemptNo: caseRow.attempt_count + 1 });
+    res.json({ rendered, missing, attemptNo, docketIdsText, caseCount });
   } catch (err) {
     next(err);
   }

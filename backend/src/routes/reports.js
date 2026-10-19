@@ -8,80 +8,116 @@ const { formatDateTimeIST } = require('../utils/dateFormat');
 const router = express.Router();
 router.use(authenticate);
 
-// Per-attempt activity/audit-trail export — one row per call_event (= one contact
-// attempt). Pulls real values only: SMS Sent / Screenshot Link are derived by matching
-// message_events / evidence_files to the same (case_id, attempt_no) as the call_event,
-// which is the real existing linkage (both tables snapshot survey_cases.attempt_count at
-// the time of the action) rather than relying on message_events.call_event_id, which the
-// mobile app does not currently populate.
+// Evidence export — one row per survey_case (docket).
+// Shows the contact session that covered this docket, its contacted_at, outcome,
+// scheduled date, and the SMS/screenshot evidence — same session evidence appears on
+// all rows that belong to that session (all dockets in the same farmer-batch).
 router.get('/activity-export', requireRole(ROLES.SUPER_ADMIN, ROLES.MANAGER), async (req, res, next) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        ce.id AS call_event_id,
-        ce.case_id,
-        ce.attempt_no,
-        ce.initiated_at,
-        ce.outcome AS call_outcome,
-        ce.resolved_outcome,
-        ce.farmer_agreed_to_postpone,
-        ce.postponed_until,
+        sc.id AS case_id,
         sc.docket_id2,
+        sc.land_survey_number,
+        sc.farmer_intimation_date,
+        sc.contact_status,
+        sc.farm_area,
+        sc.crop_name,
         fr.farmer_name,
+        fr.farmer_mobile,
+        fr.village_name,
         u.name AS surveyor_name,
+        -- Latest contact session for this case
+        cs.id AS session_id,
+        cs.contacted_at,
+        cs.contact_type,
+        cs.outcome AS session_outcome,
+        cs.survey_scheduled_date,
+        cs.docket_ids_text AS batch_docket_ids,
+        cs.case_count AS batch_case_count,
+        -- Latest message event for this session (or legacy case-level)
         me.id AS message_event_id,
         me.status AS message_status,
+        me.rendered_text,
+        -- Screenshot evidence
         ef.id AS evidence_file_id
-      FROM call_events ce
-      JOIN survey_cases sc ON sc.id = ce.case_id
-      JOIN farmer_records fr ON fr.id = ce.farmer_id
-      JOIN users u ON u.id = ce.user_id
-      LEFT JOIN message_events me ON me.case_id = ce.case_id AND me.attempt_no = ce.attempt_no
-      LEFT JOIN evidence_files ef ON ef.message_event_id = me.id AND ef.kind = 'screenshot' AND ef.deleted_at IS NULL
-      ORDER BY ce.initiated_at DESC
+      FROM survey_cases sc
+      JOIN farmer_records fr ON fr.id = sc.farmer_id
+      LEFT JOIN farmer_assignments fa ON fa.farmer_id = sc.farmer_id AND fa.active = true
+      LEFT JOIN users u ON u.id = fa.user_id
+      -- Latest session this case belongs to
+      LEFT JOIN LATERAL (
+        SELECT cs2.* FROM case_contact_sessions ccs
+        JOIN contact_sessions cs2 ON cs2.id = ccs.contact_session_id
+        WHERE ccs.case_id = sc.id
+        ORDER BY cs2.contacted_at DESC LIMIT 1
+      ) cs ON true
+      -- Latest SMS for this session (or case if no session)
+      LEFT JOIN LATERAL (
+        SELECT me2.* FROM message_events me2
+        WHERE (cs.id IS NOT NULL AND me2.contact_session_id = cs.id)
+           OR (cs.id IS NULL AND me2.case_id = sc.id)
+        ORDER BY me2.created_at DESC LIMIT 1
+      ) me ON true
+      -- Screenshot evidence
+      LEFT JOIN evidence_files ef ON ef.message_event_id = me.id
+        AND ef.kind = 'screenshot' AND ef.deleted_at IS NULL
+      WHERE sc.deleted_at IS NULL
+      ORDER BY sc.farmer_intimation_date DESC NULLS LAST, fr.farmer_name, sc.docket_id2
     `);
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'PMFBY Evidence — Activity Export';
+    wb.creator = 'PMFBY Evidence — Docket Evidence Export';
     wb.created = new Date();
-    const sheet = wb.addWorksheet('Activity');
+    const sheet = wb.addWorksheet('Evidence');
     sheet.columns = [
-      { header: 'Docket Number', key: 'docketId', width: 24 },
+      { header: 'Docket ID', key: 'docketId', width: 26 },
+      { header: 'Land Survey No.', key: 'landSurveyNo', width: 18 },
       { header: 'Farmer Name', key: 'farmerName', width: 22 },
+      { header: 'Farmer Mobile', key: 'farmerMobile', width: 16 },
+      { header: 'Village', key: 'villageName', width: 18 },
+      { header: 'Intimation Date', key: 'intimationDate', width: 16 },
       { header: 'Surveyor', key: 'surveyorName', width: 20 },
-      { header: 'Attempt No.', key: 'attemptNo', width: 10 },
-      { header: 'Contacted At', key: 'contactedAt', width: 20 },
-      { header: 'Call Outcome', key: 'callOutcome', width: 16 },
-      { header: 'Resolved Outcome', key: 'resolvedOutcome', width: 16 },
-      { header: 'Farmer Agreed (Yes/No)', key: 'farmerAgreed', width: 18 },
-      { header: 'Postponed Date', key: 'postponedDate', width: 16 },
-      { header: 'SMS Sent (Yes/No)', key: 'smsSent', width: 16 },
-      { header: 'Screenshot Link', key: 'screenshotLink', width: 40 },
+      { header: 'Contacted At', key: 'contactedAt', width: 22 },
+      { header: 'Contact Type', key: 'contactType', width: 14 },
+      { header: 'Outcome', key: 'outcome', width: 16 },
+      { header: 'Survey Scheduled Date', key: 'surveyDate', width: 22 },
+      { header: 'Case Status', key: 'caseStatus', width: 16 },
+      { header: 'Batch Size (dockets)', key: 'batchSize', width: 16 },
+      { header: 'All Batch Dockets', key: 'batchDockets', width: 60 },
+      { header: 'SMS Sent', key: 'smsSent', width: 12 },
+      { header: 'SMS Status', key: 'smsStatus', width: 16 },
+      { header: 'Screenshot Link', key: 'screenshotLink', width: 50 },
     ];
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     for (const row of rows) {
-      const smsSent = row.message_event_id != null;
-      const farmerAgreed = row.farmer_agreed_to_postpone === null ? '' : (row.farmer_agreed_to_postpone ? 'Yes' : 'No');
       sheet.addRow({
         docketId: row.docket_id2 || '',
+        landSurveyNo: row.land_survey_number || '',
         farmerName: row.farmer_name || '',
+        farmerMobile: row.farmer_mobile || '',
+        villageName: row.village_name || '',
+        intimationDate: row.farmer_intimation_date ? formatDateTimeIST(row.farmer_intimation_date) : '',
         surveyorName: row.surveyor_name || '',
-        attemptNo: row.attempt_no,
-        contactedAt: formatDateTimeIST(row.initiated_at) || '',
-        callOutcome: row.call_outcome || '',
-        resolvedOutcome: row.resolved_outcome || '',
-        farmerAgreed,
-        postponedDate: row.resolved_outcome === 'postponed' && row.farmer_agreed_to_postpone
-          ? (formatDateTimeIST(row.postponed_until) || '') : '',
-        smsSent: smsSent ? 'Yes' : 'No',
-        screenshotLink: smsSent && row.evidence_file_id ? `${baseUrl}/evidence/${row.evidence_file_id}/download` : '',
+        contactedAt: row.contacted_at ? formatDateTimeIST(row.contacted_at) : '',
+        contactType: row.contact_type || '',
+        outcome: row.session_outcome || '',
+        surveyDate: row.survey_scheduled_date ? formatDateTimeIST(row.survey_scheduled_date) : '',
+        caseStatus: row.contact_status || '',
+        batchSize: row.batch_case_count || '',
+        batchDockets: row.batch_docket_ids || '',
+        smsSent: row.message_event_id ? 'Yes' : 'No',
+        smsStatus: row.message_status || '',
+        screenshotLink: row.evidence_file_id ? `${baseUrl}/evidence/${row.evidence_file_id}/download` : '',
       });
     }
     sheet.getRow(1).font = { bold: true };
+    // Freeze header row
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="activity-export.xlsx"');
+    res.setHeader('Content-Disposition', 'attachment; filename="docket-evidence-export.xlsx"');
     await wb.xlsx.write(res);
     res.end();
   } catch (err) {
