@@ -7,19 +7,28 @@ const { getCaseIfSurveyorAssigned, getCaseForUserOrNull } = require('../services
 const { storage } = require('../lib/storage');
 const { sha256Buffer } = require('../utils/checksum');
 const { recordAudit } = require('../services/auditLog');
+const { resolveSession } = require('../services/sessionScope');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 router.use(authenticate);
 
-const VALID_KINDS = ['screenshot', 'voice_note', 'emergency_audio', 'emergency_video', 'other'];
+const VALID_KINDS = ['screenshot', 'call_screenshot', 'voice_note', 'emergency_audio', 'emergency_video', 'other'];
 
 // Upload evidence (screenshot reference, voice note, emergency media). Stores
 // AES-256-GCM-encrypted at rest; records sha256 checksum of the plaintext bytes.
 router.post('/', upload.single('file'), async (req, res, next) => {
   try {
-    const { caseId, kind, callEventId, messageEventId, emergencyIncidentId, idempotencyKey } = req.body;
-    if (!caseId || !kind || !req.file) return res.status(400).json({ error: 'caseId, kind, file required' });
+    const { sessionId, kind, callEventId, messageEventId, emergencyIncidentId, idempotencyKey } = req.body;
+    let caseId = req.body.caseId;
+    let contactSessionId = null;
+    if (!caseId && sessionId) {
+      const resolved = await resolveSession(sessionId, req.user);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      caseId = resolved.caseId;
+      contactSessionId = sessionId;
+    }
+    if (!caseId || !kind || !req.file) return res.status(400).json({ error: 'caseId (or sessionId), kind, file required' });
     if (!VALID_KINDS.includes(kind)) return res.status(400).json({ error: `kind must be one of ${VALID_KINDS.join(', ')}` });
 
     let caseRow;
@@ -36,10 +45,11 @@ router.post('/', upload.single('file'), async (req, res, next) => {
     const { rows: insertedRows } = await pool.query(
       `INSERT INTO evidence_files (case_id, farmer_id, user_id, call_event_id, message_event_id,
          emergency_incident_id, kind, original_filename, checksum_sha256, encrypted,
-         upload_status, size_bytes, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,'pending',$10,$11) RETURNING *`,
+         upload_status, size_bytes, idempotency_key, contact_session_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,'pending',$10,$11,$12) RETURNING *`,
       [caseId, caseRow.farmer_id, req.user.id, callEventId || null, messageEventId || null,
-        emergencyIncidentId || null, kind, req.file.originalname, checksum, req.file.size, idempotencyKey || null]
+        emergencyIncidentId || null, kind, req.file.originalname, checksum, req.file.size, idempotencyKey || null,
+        contactSessionId]
     );
     const evidenceFile = insertedRows[0];
 

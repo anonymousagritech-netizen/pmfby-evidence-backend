@@ -52,6 +52,8 @@ router.get('/farmer/:farmerId', async (req, res, next) => {
     const { rows: sessions } = await pool.query(`
       SELECT cs.*, u.name AS surveyor_name,
              COUNT(me.id)::int                        AS sms_count,
+             (SELECT COUNT(*)::int FROM evidence_files ef
+               WHERE ef.contact_session_id = cs.id AND ef.deleted_at IS NULL) AS evidence_count,
              MAX(me.created_at)                       AS last_sms_at,
              (array_agg(me.status ORDER BY me.created_at DESC))[1] AS last_sms_status,
              (array_agg(me.rendered_text ORDER BY me.created_at DESC))[1] AS last_sms_text

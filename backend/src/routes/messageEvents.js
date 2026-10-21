@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { ROLES } = require('../middleware/rbac');
 const { getCaseIfSurveyorAssigned } = require('../services/resourceScope');
 const { recordAudit } = require('../services/auditLog');
+const { resolveSession } = require('../services/sessionScope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -34,13 +35,13 @@ router.post('/', async (req, res, next) => {
 
     if (sessionId) {
       // Session path: one message event covers all cases in the batch.
-      const { rows: [session] } = await pool.query(
-        `SELECT * FROM contact_sessions WHERE id = $1`, [sessionId]
-      );
-      if (!session) return res.status(404).json({ error: 'Session not found' });
-      if (session.user_id !== req.user.id) return res.status(403).json({ error: 'Not your session' });
-      farmerId = session.farmer_id;
-      resolvedCaseId = null;   // session-level event has no single case_id
+      const resolved = await resolveSession(sessionId, req.user);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      const session = resolved.session;
+      farmerId = resolved.farmerId;
+      // message_events.case_id is NOT NULL: anchor the event to the session's first case;
+      // contact_session_id carries the real batch link.
+      resolvedCaseId = resolved.caseId;
       // Attempt no = number of sessions for this farmer+batch so far
       const { rows: [{ cnt }] } = await pool.query(
         `SELECT count(*)::int AS cnt FROM contact_sessions

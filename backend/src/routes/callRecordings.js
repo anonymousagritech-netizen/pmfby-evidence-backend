@@ -6,6 +6,7 @@ const { ROLES } = require('../middleware/rbac');
 const { getCaseIfSurveyorAssigned } = require('../services/resourceScope');
 const { storage } = require('../lib/storage');
 const { sha256Buffer } = require('../utils/checksum');
+const { resolveSession } = require('../services/sessionScope');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -17,9 +18,15 @@ router.use(authenticate);
 // automated injection into a live cellular call is NOT implemented (platform limitation).
 router.post('/', upload.single('file'), async (req, res, next) => {
   try {
-    const { caseId, callEventId, kind, consentAcknowledged, durationSeconds, voiceTemplateId } = req.body;
-    if (!caseId) return res.status(400).json({ error: 'caseId required' });
+    const { sessionId, callEventId, kind, consentAcknowledged, durationSeconds, voiceTemplateId } = req.body;
+    let caseId = req.body.caseId;
     if (req.user.role_key !== ROLES.SURVEYOR) return res.status(403).json({ error: 'Only surveyors record voice notes' });
+    if (!caseId && sessionId) {
+      const resolved = await resolveSession(sessionId, req.user);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      caseId = resolved.caseId;
+    }
+    if (!caseId) return res.status(400).json({ error: 'caseId or sessionId required' });
     if (kind !== 'voice_message_playback' && consentAcknowledged !== 'true' && consentAcknowledged !== true) {
       return res.status(400).json({ error: 'consentAcknowledged must be true for a recorded voice note' });
     }
