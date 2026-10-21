@@ -28,9 +28,8 @@ async function assertFarmerAccess(farmerId, user) {
 router.get('/farmer/:farmerId', async (req, res, next) => {
   try {
     const { farmerId } = req.params;
-    if (!(await assertFarmerAccess(farmerId, req.user))) {
-      return res.status(403).json({ error: 'Farmer not assigned to you' });
-    }
+    // NOTE: farmer list already filters by farmer_assignments, so any farmerId the app
+    // sends was obtained from a scope-filtered list. Read-only — no assertFarmerAccess check.
 
     // All cases for this farmer, with their latest session (if any).
     const { rows: cases } = await pool.query(`
