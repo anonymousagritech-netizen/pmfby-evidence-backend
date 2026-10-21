@@ -48,12 +48,18 @@ router.get('/farmer/:farmerId', async (req, res, next) => {
       ORDER BY sc.farmer_intimation_date DESC NULLS LAST, sc.docket_id2
     `, [farmerId]);
 
-    // Existing sessions for this farmer.
+    // Existing sessions for this farmer, with message-event summary attached.
     const { rows: sessions } = await pool.query(`
-      SELECT cs.*, u.name AS surveyor_name
+      SELECT cs.*, u.name AS surveyor_name,
+             COUNT(me.id)::int                        AS sms_count,
+             MAX(me.created_at)                       AS last_sms_at,
+             (array_agg(me.status ORDER BY me.created_at DESC))[1] AS last_sms_status,
+             (array_agg(me.rendered_text ORDER BY me.created_at DESC))[1] AS last_sms_text
       FROM contact_sessions cs
       JOIN users u ON u.id = cs.user_id
+      LEFT JOIN message_events me ON me.contact_session_id = cs.id
       WHERE cs.farmer_id = $1
+      GROUP BY cs.id, u.name
       ORDER BY cs.contacted_at DESC
     `, [farmerId]);
 
@@ -68,7 +74,7 @@ router.get('/farmer/:farmerId', async (req, res, next) => {
       ...b,
       caseCount: b.cases.length,
       docketIds: b.cases.map(c => c.docket_id2).filter(Boolean),
-      // Latest session for this batch
+      // Latest session for this batch (includes contact_type + sms summary)
       latestSession: sessions.find(s =>
         s.intimation_batch_date && s.intimation_batch_date.toISOString().slice(0, 10) === b.intimationDate
       ) || null,
