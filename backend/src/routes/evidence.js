@@ -38,7 +38,11 @@ router.post('/', upload.single('file'), async (req, res, next) => {
 
     if (idempotencyKey) {
       const existing = await pool.query('SELECT * FROM evidence_files WHERE idempotency_key = $1', [idempotencyKey]);
-      if (existing.rows[0]) return res.status(200).json({ evidenceFile: existing.rows[0], deduped: true });
+      if (existing.rows[0] && existing.rows[0].upload_status === 'uploaded') {
+        return res.status(200).json({ evidenceFile: existing.rows[0], deduped: true });
+      }
+      // A previous attempt inserted the row but never stored the file: redo it from scratch.
+      if (existing.rows[0]) await pool.query('DELETE FROM evidence_files WHERE id = $1', [existing.rows[0].id]);
     }
 
     const checksum = sha256Buffer(req.file.buffer);
@@ -54,7 +58,12 @@ router.post('/', upload.single('file'), async (req, res, next) => {
     const evidenceFile = insertedRows[0];
 
     const fileKey = `evidence/${evidenceFile.id}/${req.file.originalname || 'file'}`;
-    await storage.putObject(fileKey, req.file.buffer, { encrypt: true });
+    try {
+      await storage.putObject(fileKey, req.file.buffer, { encrypt: true });
+    } catch (storeErr) {
+      await pool.query(`UPDATE evidence_files SET upload_status = 'failed' WHERE id = $1`, [evidenceFile.id]);
+      throw storeErr;
+    }
 
     const { rows } = await pool.query(
       `UPDATE evidence_files SET file_key = $2, upload_status = 'uploaded' WHERE id = $1 RETURNING *`,

@@ -10,9 +10,11 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 
 function getKey() {
-  const key = Buffer.from(env.evidenceEncryptionKey, 'base64');
+  const raw = String(env.evidenceEncryptionKey).trim();
+  // 64 hex chars (e.g. `openssl rand -hex 32`) or base64 of 32 bytes (`openssl rand -base64 32`).
+  const key = /^[0-9a-fA-F]{64}$/.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
   if (key.length !== 32) {
-    throw new Error('EVIDENCE_ENCRYPTION_KEY must decode to exactly 32 bytes (base64).');
+    throw new Error('EVIDENCE_ENCRYPTION_KEY must be 32 bytes, given as 64 hex chars or base64.');
   }
   return key;
 }
